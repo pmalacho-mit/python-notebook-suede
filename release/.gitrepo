@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/pmalacho-mit/python-notebook-suede
+	branch = release
+	commit = 8c6d98158c73d73a66dc1176d91ea0f88188d4e5
+	parent = aa493a96335d940c01036e91d17eea2270c59a90
+	method = merge
+	cmdver = 0.4.9
