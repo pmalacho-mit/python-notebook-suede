@@ -1,0 +1,8 @@
+{
+  "dependencies": {
+    "buffer": "^6.0.3",
+    "katex": "^0.16.27",
+    "nanoid": "^5.1.6",
+    "pyodide": "^0.29.2"
+  }
+}
