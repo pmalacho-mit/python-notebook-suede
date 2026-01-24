@@ -1,6 +1,6 @@
 import { flatPromise } from "./flat-promise";
 import {
-  type Runtime,
+  type Env,
   loadPyodide,
   runPythonAsync,
   setGlobalPythonOutputElement,
@@ -15,8 +15,9 @@ const isPyProxy = function (jsobj: any) {
 };
 
 export async function runStarboardPython(
-  runtime: Runtime,
-  codeToRun: string,
+  runtime: Env,
+  code: string,
+  file: string,
   renderOutputIntoElement: HTMLElement,
   addEntry: (payload: { method: "error" | "result"; data: any[] }) => void,
 ): Promise<any> {
@@ -34,12 +35,12 @@ export async function runStarboardPython(
 
   setGlobalPythonOutputElement(htmlOutput);
 
-  (globalThis as any).pyodide = await pyoPromise;
+  await pyoPromise;
 
   let val = undefined;
   let error: any = undefined;
   try {
-    pythonRunChain = runPythonAsync(codeToRun);
+    pythonRunChain = runPythonAsync(code, file);
     val = await pythonRunChain;
 
     if (val !== undefined) {

@@ -2,10 +2,7 @@
 
 import { nanoid } from "nanoid";
 import { assertUnreachable } from "./util";
-import type {
-  KernelManagerMessage,
-  KernelManagerResponse,
-} from "./worker/kernel-manager";
+import type { Kernel } from "./worker/kernel-worker";
 import type {
   PyodideWorkerOptions,
   PyodideWorkerResult,
@@ -16,15 +13,14 @@ import type { NotebookFilesystemSync } from "./worker/emscripten-fs";
 import { render } from "katex";
 import KernelManagerWorker from "./worker/kernel-manager?worker";
 
-export interface Runtime {
+export interface Env {
   /**
-   * An optional filesystem that can be added by a plugin. Internal until we figure out the best way of dealing with this.
+   * The shared filesystem for the kernel
    */
-  fs?: NotebookFilesystemSync;
-  /**
-   *
-   */
-  workspacePath?: string;
+  fs: NotebookFilesystemSync & {
+    /** The location within the pyodide filesystem that the shared filesystem is mounted */
+    root: string;
+  };
 }
 
 let setupStatus: "unstarted" | "started" | "completed" = "unstarted";
@@ -65,20 +61,6 @@ function drawCanvas(pixels: number[], width: number, height: number) {
   CURRENT_HTML_OUTPUT_ELEMENT?.appendChild(canvas);
 }
 
-function getAsyncMemory() {
-  console.log(globalThis["SharedArrayBuffer"]);
-  if (
-    "SharedArrayBuffer" in globalThis &&
-    "Atomics" in globalThis &&
-    (globalThis as any)["crossOriginIsolated"] !== false
-  ) {
-    console.log("supported!");
-    return new AsyncMemory();
-  } else {
-    return null;
-  }
-}
-
 async function convertResult(data: PyodideWorkerResult) {
   if (data.display === "default") {
     return data.value;
@@ -107,15 +89,17 @@ async function convertResult(data: PyodideWorkerResult) {
   }
 }
 
-function loadKernelManager(runtime?: Runtime) {
+function loadKernelManager(runtime?: Env) {
   const worker = new KernelManagerWorker();
 
   // Since all kernels are running in the same worker, they might as well use the same async memory and object proxy
-  const asyncMemory = getAsyncMemory();
-  const objectProxyHost = asyncMemory ? new ObjectProxyHost(asyncMemory) : null;
-  const getInputId = objectProxyHost?.registerRootObject(() => {
+  const asyncMemory = new AsyncMemory();
+  const objectProxyHost = new ObjectProxyHost(asyncMemory);
+
+  const getInputId = objectProxyHost.registerRootObject(() => {
     return prompt();
   });
+
   // TODO: Remove 'as any' once the starboard typings get updated
   const filesystemId = runtime?.fs
     ? objectProxyHost?.registerRootObject(runtime?.fs)
@@ -126,7 +110,7 @@ function loadKernelManager(runtime?: Runtime) {
       console.warn("Unexpected message from kernel manager", ev);
       return;
     }
-    const data = ev.data as KernelManagerResponse;
+    const data = ev.data as Kernel.Response;
 
     if (
       data.type === "proxy_reflect" ||
@@ -150,7 +134,7 @@ function loadKernelManager(runtime?: Runtime) {
       : undefined,
     filesystemId: filesystemId,
     getInputId: getInputId,
-  } as KernelManagerMessage);
+  } as Kernel.Request);
 
   return {
     kernelManager: worker,
@@ -158,7 +142,7 @@ function loadKernelManager(runtime?: Runtime) {
   };
 }
 
-export async function loadPyodide(runtime?: Runtime) {
+export async function loadPyodide(runtime?: Env) {
   if (pyodideLoadSingleton) return pyodideLoadSingleton;
 
   const kernelManagerResult = loadKernelManager(runtime);
@@ -173,7 +157,7 @@ export async function loadPyodide(runtime?: Runtime) {
   /** Pyodide Kernel id */
   const kernelId = nanoid();
 
-  const initOptions: KernelManagerMessage = {
+  const initOptions: Kernel.Request = {
     type: "import_kernel",
     className: "PyodideKernel",
     kernelId: kernelId,
@@ -181,14 +165,14 @@ export async function loadPyodide(runtime?: Runtime) {
       globalThisId: globalThisId,
       drawCanvasId: drawCanvasId,
     } as PyodideWorkerOptions,
-    workspacePath: runtime?.workspacePath ?? "/home/pyodide",
+    root: runtime?.workspacePath ?? "/home/pyodide",
   };
 
   pyodideLoadSingleton = new Promise((resolve, reject) => {
     // Only the resolve case is handled for now
     function handleInitMessage(ev: MessageEvent<any>) {
       if (!ev.data) return;
-      const data = ev.data as KernelManagerResponse;
+      const data = ev.data as Kernel.Response;
       if (data.type === "kernel_initialized" && data.kernelId === kernelId) {
         kernelManager.removeEventListener("message", handleInitMessage);
         resolve(kernelId);
@@ -200,7 +184,7 @@ export async function loadPyodide(runtime?: Runtime) {
   kernelManager.addEventListener("message", (e) => {
     if (!e.data) return;
 
-    const data = e.data as KernelManagerResponse;
+    const data = e.data as Kernel.Response;
     switch (data.type) {
       case "result": {
         if (data.kernelId !== kernelId) break;
@@ -253,7 +237,7 @@ export function getPyodideLoadingStatus() {
   return loadingStatus;
 }
 
-export async function runPythonAsync(code: string) {
+export async function runPythonAsync(code: string, file: string) {
   if (!pyodideLoadSingleton) return;
 
   const kernelId = await pyodideLoadSingleton;
@@ -265,12 +249,8 @@ export async function runPythonAsync(code: string) {
     });
 
     try {
-      kernelManager.postMessage({
-        type: "run",
-        kernelId: kernelId,
-        id: id,
-        code: code,
-      } as KernelManagerMessage);
+      const msg = { type: "run", kernelId, id, code, file } as const;
+      kernelManager.postMessage(msg satisfies Kernel.Request);
     } catch (e) {
       console.warn(e, code);
       reject(e);
