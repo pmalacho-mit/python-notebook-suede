@@ -1,16 +1,19 @@
 <script lang="ts" module>
   import { WithEvents } from "../with-events-suede";
+
+  export type ICellEvents = {
+    "cell selected": [];
+    "request select": [];
+    "request select next": [type: Cell["type"] | "any"];
+    "request select previous": [type: Cell["type"] | "any"];
+  };
+
   type Cell = {
     type: "code" | "markdown";
     content: string;
   };
 
-  export class CellEvents extends WithEvents<{
-    "cell selected": [];
-    "request select": [];
-    "request select next": [type: Cell["type"] | "any"];
-    "request select previous": [type: Cell["type"] | "any"];
-  }> {}
+  export class CellEvents extends WithEvents<ICellEvents> {}
 
   class CodeCell extends CodeModel implements Cell {
     readonly type = "code";
@@ -92,6 +95,7 @@
   let { model }: { model: Model } = $props();
 
   let selectedIndex = $state<number | null>(null);
+  let container = $state<HTMLElement>();
 
   $effect(() =>
     WithEvents.Collect(model.cells.map(({ events }) => events)).subscribe({
@@ -122,15 +126,35 @@
   );
 
   const getRunID = () => ++model.runID;
+
+  const wrappers = new Array<HTMLElement>();
+
+  const scrollTo = (index: number) =>
+    wrappers[index]?.scrollIntoView({
+      behavior: "smooth",
+      block: "center",
+      inline: "nearest",
+    });
+
+  $effect(() => {
+    wrappers.length = model.cells.length;
+  });
 </script>
 
-<div style="padding: 1rem; display: flex; flex-direction: column; gap: 1rem;">
+<div
+  style:height="100%"
+  style="padding: 1rem; display: flex; flex-direction: column; gap: 1rem;"
+  bind:this={container}
+>
   {#each model.cells as cell, index}
-    {#if cell.type === "code"}
-      {@const selected = selectedIndex === index}
-      <Code model={cell} {kernel} {getRunID} {selected} />
-    {:else if cell.type === "markdown"}
-      <Markdown content={cell.content} />
-    {/if}
+    <div bind:this={wrappers[index]} style:height="fit-content">
+      {#if cell.type === "code"}
+        {@const selected = selectedIndex === index}
+        {@const reveal = () => scrollTo(index)}
+        <Code model={cell} {kernel} {getRunID} {selected} {reveal} />
+      {:else if cell.type === "markdown"}
+        <Markdown content={cell.content} />
+      {/if}
+    </div>
   {/each}
 </div>

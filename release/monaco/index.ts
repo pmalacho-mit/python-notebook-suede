@@ -16,7 +16,7 @@ export function enableMonacoAutoHeight(opts: {
     scrollbar: {
       vertical: "hidden",
       horizontal: "auto",
-      handleMouseWheel: true,
+      handleMouseWheel: false,
     },
     minimap: { enabled: false },
     overviewRulerLanes: 0,
@@ -102,35 +102,33 @@ export function enableMonacoAutoHeight(opts: {
 }
 
 export type NotebookCellKeybindings = {
-  editor: monaco.editor.IStandaloneCodeEditor;
-
   // execution
-  runCellAndFocusNext: () => void | Promise<void>;
-  runCell: () => void | Promise<void>;
+  runAndFocusNext: () => void | Promise<void>;
+  run: () => void | Promise<void>;
   //runCellAndInsertBelow: () => void | Promise<void>;
 
   // mode / focus
   // exitEditMode: () => void;
 
   // navigation (optional but nice)
-  focusPrevCell?: () => void;
-  focusNextCell?: () => void;
+  focusPrevious?: () => void;
+  focusNext?: () => void;
 
   // Optional: treat "at top/bottom of editor" as notebook navigation.
   enableEdgeArrowNavigation?: boolean;
 };
 
 export function installNotebookCellKeybindings(
+  editor: monaco.editor.IStandaloneCodeEditor,
   opts: NotebookCellKeybindings,
 ): monaco.IDisposable {
   const {
-    editor,
-    runCellAndFocusNext,
-    runCell,
+    runAndFocusNext: runAndFocusNext,
+    run: runCell,
     //runCellAndInsertBelow,
     //exitEditMode,
-    focusPrevCell,
-    focusNextCell,
+    focusPrevious: focusPrevCell,
+    focusNext: focusNextCell,
     enableEdgeArrowNavigation = true,
   } = opts;
 
@@ -178,7 +176,7 @@ export function installNotebookCellKeybindings(
     id: "notebook.runCell.shiftEnter",
     label: "Run Cell (Shift+Enter)",
     keybinding: monaco.KeyMod.Shift | monaco.KeyCode.Enter,
-    run: runCellAndFocusNext,
+    run: runAndFocusNext,
   });
 
   addAction({

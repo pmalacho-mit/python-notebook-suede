@@ -55,31 +55,38 @@
   let selection = $state<"part1" | "part2" | "homework1">();
 </script>
 
-<div>
-  <select bind:value={selection}>
-    <option value="part1">Intro Part 1</option>
-    <option value="part2">Intro Part 2</option>
-    <option value="homework1">Homework 1</option>
-  </select>
-</div>
+<div style:height="100vh" style:display="flex" style:flex-direction="column">
+  <div>
+    <label>Notebook:</label>
+    <select bind:value={selection}>
+      <option value="part1">Intro Part 1</option>
+      <option value="part2">Intro Part 2</option>
+      <option value="homework1">Homework 1</option>
+    </select>
+  </div>
 
-<div style="background: #f3f4f6; padding: 1rem; margin-top: 1rem;">
-  {#if selection}
-    {#await fetch(resolve(`/${selection}.ipynb` as any)) then response}
-      {#await response.text() then ipynbText}
-        <Notebook
-          model={new Model({
-            cells: parseIpynb(ipynbText),
-            realpath: `${selection}.ipynb`,
-          })}
-        />
+  <div
+    style:flex-grow="1"
+    style:height="0"
+    style="background: #f3f4f6; padding: 1rem; margin-top: 1rem;"
+  >
+    {#if selection}
+      {#await fetch(resolve(`/${selection}.ipynb` as any)) then response}
+        {#await response.text() then ipynbText}
+          <Notebook
+            model={new Model({
+              cells: parseIpynb(ipynbText),
+              realpath: `${selection}.ipynb`,
+            })}
+          />
+        {:catch error}
+          <p style="color: red;">
+            Error reading notebook content: {error.message}
+          </p>
+        {/await}
       {:catch error}
-        <p style="color: red;">
-          Error reading notebook content: {error.message}
-        </p>
+        <p style="color: red;">Error loading notebook: {error.message}</p>
       {/await}
-    {:catch error}
-      <p style="color: red;">Error loading notebook: {error.message}</p>
-    {/await}
-  {/if}
+    {/if}
+  </div>
 </div>
