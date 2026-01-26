@@ -1,6 +1,6 @@
 import { nanoid } from "nanoid";
 import { AsyncMemory } from "./async-memory";
-import type { Typed } from "./utils";
+import type { Typed } from "../utils";
 
 const SERIALIZATION = {
   UNDEFINED: 0,

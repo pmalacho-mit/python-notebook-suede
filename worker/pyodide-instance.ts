@@ -1,55 +1,92 @@
-import type { KernelManager } from "./kernel-manager";
-import type {
-  PyodideWorkerOptions,
-  PyodideWorkerResult,
-} from "./worker-message";
+import type { Kernel } from "./kernel-worker";
 import { EMFS } from "./emscripten-fs";
 import { patchMatplotlib } from "../pyodide/matplotlib";
 import { loadPyodide, version, type PyodideAPI } from "pyodide";
 
-export class PyodideKernel {
-  kernelId: string;
-  options: PyodideWorkerOptions;
+export type RunCodeResult = {
+  display?: "default" | "html" | "latex";
+  value: any; // TODO: Normal objects can be normal objects, python proxies might need a bit of comlink
+};
+
+const Char = {
+  NewLine: 10,
+} as const;
+
+const io = (
+  manager: Kernel,
+): {
+  [k in "stdin" | "stdout" | "stderr"]: Parameters<
+    PyodideAPI[`set${Capitalize<k>}`]
+  >[0];
+} => {
+  let acc = "";
+
+  const encoder = new TextEncoder();
+  let input = new Uint8Array();
+  let inputIndex = -1; // -1 means that we just returned null
+  const stdin = () => {
+    if (inputIndex === -1) {
+      const text = manager.input(acc);
+      input = encoder.encode(text + (text.endsWith("\n") ? "" : "\n"));
+      inputIndex = 0;
+    }
+
+    if (inputIndex < input.length) {
+      let character = input[inputIndex];
+      inputIndex++;
+      return character;
+    } else {
+      inputIndex = -1;
+      return null;
+    }
+  };
+
+  const raw = (charCode: number) => {
+    if (charCode === Char.NewLine) {
+      manager.log("log", acc);
+      acc = "";
+    } else acc += String.fromCharCode(charCode);
+  };
+
+  const batched = (output: string) => manager.log("error", output);
+
+  return { stdin: { stdin }, stdout: { raw }, stderr: { batched } };
+};
+
+export class PyodideInstance {
+  readonly globalThisId: string;
+  readonly drawCanvasId: string;
+  readonly interruptBuffer: Uint8Array<ArrayBufferLike>;
+
   proxiedGlobalThis: undefined | any;
   proxiedDrawCanvas: (pixels: number[], width: number, height: number) => void =
     () => {};
   pyodide: PyodideAPI | undefined = undefined;
 
-  constructor(options: { id: string } & PyodideWorkerOptions) {
-    this.kernelId = options.id;
-    this.options = options;
+  constructor(options: {
+    globalThisId: string;
+    drawCanvasId: string;
+    interruptBuffer: Uint8Array<ArrayBufferLike>;
+  }) {
+    this.globalThisId = options.globalThisId;
+    this.drawCanvasId = options.drawCanvasId;
+    this.interruptBuffer = options.interruptBuffer;
   }
 
-  async init(manager: KernelManager, workspacePath: string): Promise<any> {
-    this.proxiedGlobalThis = this.proxyGlobalThis(
-      manager,
-      this.options.globalThisId,
-    );
-    this.proxiedDrawCanvas =
-      manager.proxy && this.options.drawCanvasId
-        ? manager.proxy.getObjectProxy(this.options.drawCanvasId)
-        : () => {};
+  async init(manager: Kernel, root: string): Promise<any> {
+    this.proxiedGlobalThis = this.proxyGlobalThis(manager, this.globalThisId);
 
+    this.proxiedDrawCanvas = manager.proxy.getObjectProxy(this.drawCanvasId);
     (globalThis as any).drawPyodideCanvas = (
       pixels: number[],
       width: number,
       height: number,
     ) => {
-      if ((pixels as any).toJs) {
-        pixels = (pixels as any).toJs();
-      }
-      if (pixels instanceof Uint8ClampedArray || pixels instanceof Uint8Array) {
+      if ((pixels as any).toJs) pixels = (pixels as any).toJs();
+      if (pixels instanceof Uint8ClampedArray || pixels instanceof Uint8Array)
         pixels = Array.from(pixels);
-      }
-      // TODO: Handle the case when this.function gets called (this ends up being passed to the main thread, which won't work)
       this.proxiedDrawCanvas.apply({}, [pixels, width, height]);
     };
-
-    if (!manager.proxy && !this.options.isMainThread) {
-      console.warn(
-        "Missing object proxy, some Pyodide functionality will be restricted",
-      );
-    }
 
     const indexURL = `https://cdn.jsdelivr.net/pyodide/v${version}/full/`;
 
@@ -58,60 +95,31 @@ export class PyodideKernel {
       fullStdLib: false,
     });
 
-    const stdinFunc = this.createStdin(manager);
-    this.pyodide.setStdin({
-      stdin: stdinFunc,
-    });
+    const { stdin, stdout, stderr } = io(manager);
 
-    this.pyodide.setStdout({
-      // raw(charCode) {
-      //   if (charCode === 10) {
-      //     console.log("OUT: [newline]");
-      //   } else {
-      //     console.log("OUT RAW:", String.fromCharCode(charCode));
-      //   }
-      // },
-      batched: (output: string) => {
-        console.log("OUT:", output);
-      },
-    });
+    this.pyodide.setStdin(stdin);
+    this.pyodide.setStdout(stdout);
+    this.pyodide.setStderr(stderr);
 
-    this.pyodide.setStderr({
-      batched: (output: string) => {
-        console.error("ERR:", output);
-      },
-    });
+    this.pyodide.setInterruptBuffer(this.interruptBuffer);
 
-    if (!this.pyodide) {
-      throw new Error("Pyodide is undefined unexpectedly");
-    }
-
-    (globalThis as any).pyodide = this.pyodide;
-
-    const FS = this.pyodide.FS;
-    FS.mkdirTree(workspacePath);
-    FS.mount(new EMFS(this.pyodide, manager.syncFs), {}, workspacePath);
-
-    if (this.proxiedGlobalThis) {
-      // Fix "from js import ..."
-      /* this.pyodide.unregisterJsModule("js"); // Not needed, since register conveniently overwrites existing things */
-      this.pyodide.registerJsModule("js", this.proxiedGlobalThis); // TODO: Or should we register a new module? Like js_main
-    }
+    this.pyodide.FS.mkdirTree(root);
+    this.pyodide.FS.mount(new EMFS(this.pyodide, manager.syncFs), {}, root);
+    this.pyodide.registerJsModule("js", this.proxiedGlobalThis);
   }
 
-  async runCode(code: string): Promise<any> {
+  async load(code: string, filename: string): Promise<void> {
     if (!this.pyodide) {
       console.warn("Worker has not yet been initialized");
       return;
     }
 
-    // Again: no clue why this is necessary and only doing it in init doesn't suffice
-    (globalThis as any).pyodide = this.pyodide;
-
     // We prevent some spam, otherwise every time you run a cell with an import it will show
     // "Loading bla", "Bla was already loaded from default channel", "Loaded bla"
     let wasAlreadyLoaded: boolean | undefined = undefined;
     let msgBuffer: string[] = [];
+
+    this.pyodide.setInterruptBuffer(undefined as any); // Disable interrupts while loading packages
 
     await this.pyodide.loadPackagesFromImports(code, {
       messageCallback: (msg) => {
@@ -143,15 +151,22 @@ export class PyodideKernel {
         }
       },
     });
+  }
+
+  async runCode(
+    code: string,
+    filename: string,
+  ): Promise<RunCodeResult | undefined> {
+    if (!this.pyodide) {
+      console.warn("Worker has not yet been initialized");
+      return;
+    }
 
     let result = await this.pyodide
-      .runPythonAsync(code, {
-        filename: "/home/pyodide/main.py",
-      })
+      .runPythonAsync(code, { filename })
       .catch((error) => error);
-    let displayType: PyodideWorkerResult["display"];
 
-    console.log("Pyodide run result:", result);
+    let displayType: RunCodeResult["display"];
 
     if (result instanceof this.pyodide.ffi.PyProxy) {
       if (result._repr_html_ !== undefined) {
@@ -164,30 +179,24 @@ export class PyodideKernel {
         result = result.__str__();
         displayType = "default";
       }
-    } else if (result instanceof this.pyodide.ffi.PythonError) {
+    } else if (result instanceof this.pyodide.ffi.PythonError)
       result = result + "";
-    }
 
     this.destroyToJsResult(result);
 
     return {
       display: displayType,
       value: result,
-    } as PyodideWorkerResult;
+    };
   }
 
-  customMessage(message: any): void {
-    // No custom messages are supported nor used.
-    return;
-  }
-
-  createStdin(manager: KernelManager) {
+  createStdin(manager: Kernel, getLastLine: () => string) {
     const encoder = new TextEncoder();
     let input = new Uint8Array();
     let inputIndex = -1; // -1 means that we just returned null
     function stdin() {
       if (inputIndex === -1) {
-        const text = manager.input();
+        const text = manager.input(getLastLine());
         input = encoder.encode(text + (text.endsWith("\n") ? "" : "\n"));
         inputIndex = 0;
       }
@@ -204,7 +213,7 @@ export class PyodideKernel {
     return stdin;
   }
 
-  private proxyGlobalThis(manager: KernelManager, id?: string) {
+  private proxyGlobalThis(manager: Kernel, id?: string) {
     // Special cases for the globalThis object. We don't need to proxy everything
     const noProxy = new Set<string | symbol>([
       "location",
@@ -264,13 +273,7 @@ export class PyodideKernel {
   }
 
   private destroyToJsResult(x: any) {
-    if (!this.pyodide) return;
-    if (!x) {
-      return;
-    }
-    if (x instanceof this.pyodide.ffi.PyProxy) {
-      x.destroy();
-      return;
-    }
+    if (!this.pyodide || !x) return;
+    if (x instanceof this.pyodide.ffi.PyProxy) x.destroy();
   }
 }

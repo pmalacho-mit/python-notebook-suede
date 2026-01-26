@@ -37,14 +37,24 @@ export class AsyncMemory {
   static UNLOCKED = 0;
   static LOCKED = 1;
 
+  static readonly SIGINT = 2 as const;
+
   readonly sharedLock: SharedArrayBuffer;
   readonly lockAndSize: Int32Array;
 
   readonly sharedMemory: SharedArrayBuffer;
   readonly memory: Uint8Array;
 
-  constructor(sharedLock?: SharedArrayBuffer, sharedMemory?: SharedArrayBuffer) {
-    this.sharedLock = sharedLock ?? new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
+  readonly interruptBuffer: SharedArrayBuffer;
+  readonly interrupter: Uint8Array;
+
+  constructor(
+    sharedLock?: SharedArrayBuffer,
+    sharedMemory?: SharedArrayBuffer,
+    interruptBuffer?: SharedArrayBuffer,
+  ) {
+    this.sharedLock =
+      sharedLock ?? new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
     this.lockAndSize = new Int32Array(this.sharedLock);
     if (this.lockAndSize.length < 8) {
       throw new Error("Expected an sharedLock with at least 8x32 bytes");
@@ -56,6 +66,9 @@ export class AsyncMemory {
     if (this.sharedMemory.byteLength < 1024) {
       throw new Error("Expected an sharedMemory with at least 1024 bytes");
     }
+
+    this.interruptBuffer = interruptBuffer ?? new SharedArrayBuffer(1);
+    this.interrupter = new Uint8Array(this.interruptBuffer);
   }
 
   /**
@@ -66,10 +79,12 @@ export class AsyncMemory {
       this.lockAndSize,
       AsyncMemory.LOCK_WORKER_INDEX,
       AsyncMemory.UNLOCKED, // old value
-      AsyncMemory.LOCKED // new value
+      AsyncMemory.LOCKED, // new value
     );
     if (oldValue !== AsyncMemory.UNLOCKED) {
-      throw new Error(`Cannot lock worker, the worker has to be unlocked ${AsyncMemory.UNLOCKED} !== ${oldValue}`);
+      throw new Error(
+        `Cannot lock worker, the worker has to be unlocked ${AsyncMemory.UNLOCKED} !== ${oldValue}`,
+      );
     }
   }
 
@@ -81,10 +96,12 @@ export class AsyncMemory {
       this.lockAndSize,
       AsyncMemory.LOCK_SIZE_INDEX,
       AsyncMemory.UNLOCKED, // old value
-      AsyncMemory.LOCKED // new value
+      AsyncMemory.LOCKED, // new value
     );
     if (oldValue !== AsyncMemory.UNLOCKED) {
-      throw new Error(`Cannot set size flag, the size has to be unlocked ${AsyncMemory.UNLOCKED} !== ${oldValue}`);
+      throw new Error(
+        `Cannot set size flag, the size has to be unlocked ${AsyncMemory.UNLOCKED} !== ${oldValue}`,
+      );
     }
   }
 
@@ -92,7 +109,11 @@ export class AsyncMemory {
    * Only legal if the worker is locked
    */
   waitForSize() {
-    Atomics.wait(this.lockAndSize, AsyncMemory.LOCK_SIZE_INDEX, AsyncMemory.LOCKED);
+    Atomics.wait(
+      this.lockAndSize,
+      AsyncMemory.LOCK_SIZE_INDEX,
+      AsyncMemory.LOCKED,
+    );
   }
 
   /**
@@ -118,7 +139,7 @@ export class AsyncMemory {
       this.lockAndSize,
       AsyncMemory.LOCK_SIZE_INDEX,
       AsyncMemory.LOCKED, // old value
-      AsyncMemory.UNLOCKED // new value
+      AsyncMemory.UNLOCKED, // new value
     );
     if (oldValue != AsyncMemory.LOCKED) {
       throw new Error("Tried to unlock, but was already unlocked");
@@ -134,11 +155,15 @@ export class AsyncMemory {
       this.lockAndSize,
       AsyncMemory.LOCK_SIZE_INDEX,
       AsyncMemory.LOCKED, // old value
-      AsyncMemory.UNLOCKED // new value
+      AsyncMemory.UNLOCKED, // new value
     );
     if (oldValue != AsyncMemory.LOCKED) {
       // And force unlock it
-      Atomics.store(this.lockAndSize, AsyncMemory.LOCK_SIZE_INDEX, AsyncMemory.UNLOCKED);
+      Atomics.store(
+        this.lockAndSize,
+        AsyncMemory.LOCK_SIZE_INDEX,
+        AsyncMemory.UNLOCKED,
+      );
     }
     Atomics.notify(this.lockAndSize, AsyncMemory.LOCK_SIZE_INDEX);
   }
@@ -151,11 +176,19 @@ export class AsyncMemory {
       this.lockAndSize,
       AsyncMemory.LOCK_WORKER_INDEX,
       AsyncMemory.LOCKED, // old value
-      AsyncMemory.UNLOCKED // new value
+      AsyncMemory.UNLOCKED, // new value
     );
     if (oldValue != AsyncMemory.LOCKED) {
       throw new Error("Tried to unlock, but was already unlocked");
     }
     Atomics.notify(this.lockAndSize, AsyncMemory.LOCK_WORKER_INDEX);
+  }
+
+  interrupt(code = AsyncMemory.SIGINT) {
+    this.interrupter[0] = code;
+  }
+
+  clearInterrupt() {
+    this.interrupter[0] = 0;
   }
 }

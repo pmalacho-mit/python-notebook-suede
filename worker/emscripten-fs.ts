@@ -8,7 +8,7 @@
 // https://github.com/curiousdannii/emglken/blob/master/src/emglkenfs.js
 
 import type { PyodideAPI } from "pyodide";
-import type { SyncResult } from "./utils";
+import type { SyncResult } from "../utils";
 
 export interface NotebookFilesystemSync {
   /**
@@ -82,7 +82,7 @@ type AdvancedEmscriptenFS = {
     parent: FS.FSNode | null,
     name: string,
     mode: number,
-    dev: number,
+    dev?: number,
   ): FS.FSNode;
 };
 
@@ -99,6 +99,7 @@ const methods = (
     ERRNO_CODES,
   }: Pick<PyodideAPI, "FS" | "ERRNO_CODES"> & { FS: AdvancedEmscriptenFS },
   custom: NotebookFilesystemSync,
+  log: boolean = false,
 ) => {
   let createNode: AdvancedEmscriptenFS["createNode"];
 
@@ -109,6 +110,10 @@ const methods = (
     result: SyncResult<T, E>,
   ) => T;
 
+  const logCall = (name: string, ...args: any[]) => {
+    if (log) console.log(`[emscripten-fs] ${name}`, args);
+  };
+
   type CustomNode = FS.FSNode & {
     timestamp?: number;
   };
@@ -118,6 +123,7 @@ const methods = (
 
   const nodeOps: FS.NodeOps = {
     getattr: (node) => {
+      logCall("nodeOps.getattr", { node: node.name, id: node.id });
       const { id: ino, mode, rdev } = node;
       const time = new Date(isCustomNode(node) ? node.timestamp! : Date.now());
       return {
@@ -138,6 +144,7 @@ const methods = (
     },
 
     setattr: (node, attr) => {
+      logCall("nodeOps.setattr", { node: node.name, attr });
       if (!attr) return;
       if (attr.mode !== undefined) node.mode = attr.mode;
       if (attr.timestamp !== undefined)
@@ -145,6 +152,7 @@ const methods = (
     },
 
     lookup: (parent, name) => {
+      logCall("nodeOps.lookup", { parent: parent.name, name });
       const path = realPath(parent, name);
       const result = custom.get({ path });
       if (!result.ok) throw FS.genericErrors[ERRNO_CODES["ENOENT"]];
@@ -157,6 +165,7 @@ const methods = (
     },
 
     mknod: (parent, name, mode, dev) => {
+      logCall("nodeOps.mknod", { parent: parent.name, name, mode, dev });
       const node = createNode!(parent, name, mode, dev as number);
       const path = realPath(node);
       FS.isDir(node.mode)
@@ -166,6 +175,11 @@ const methods = (
     },
 
     rename: (oldNode, newDir, newName) => {
+      logCall("nodeOps.rename", {
+        oldNode: oldNode.name,
+        newDir: newDir.name,
+        newName,
+      });
       const path = realPath(oldNode);
       const newPath = realPath(newDir, newName);
       syncResult(custom.move({ path, newPath }));
@@ -173,16 +187,19 @@ const methods = (
     },
 
     unlink: (parent, name) => {
+      logCall("nodeOps.unlink", { parent: parent.name, name });
       const path = realPath(parent, name);
       syncResult(custom.delete({ path }));
     },
 
     rmdir: (parent, name) => {
+      logCall("nodeOps.rmdir", { parent: parent.name, name });
       const path = realPath(parent, name);
       syncResult(custom.delete({ path }));
     },
 
     readdir: (node) => {
+      logCall("nodeOps.readdir", { node: node.name });
       const path = realPath(node);
       let result = syncResult(custom.listDirectory({ path }));
       if (!result.includes(".")) result.push(".");
@@ -191,10 +208,12 @@ const methods = (
     },
 
     symlink: (parent, newName, oldPath) => {
+      logCall("nodeOps.symlink", { parent: parent.name, newName, oldPath });
       throw new FS.ErrnoError(ERRNO_CODES["EPERM"]);
     },
 
     readlink: (node) => {
+      logCall("nodeOps.readlink", { node: node.name });
       throw new FS.ErrnoError(ERRNO_CODES["EPERM"]);
     },
   };
@@ -207,6 +226,8 @@ const methods = (
   const streamOps: FS.StreamOps = {
     open: (stream) => {
       const path = realPath(stream.object);
+      logCall("streamOps.open", { path });
+
       if (!FS.isFile(stream.object.mode)) return;
       const result = syncResult(custom.get({ path }));
       if (result === null) return;
@@ -214,12 +235,19 @@ const methods = (
     },
     close: (stream) => {
       const path = realPath(stream.object);
+      logCall("streamOps.close", { path });
       if (!FS.isFile(stream.object.mode) || !isCustomStream(stream)) return;
       const value = decoder.decode(stream.fileData);
       stream.fileData = undefined;
       syncResult(custom.put({ path, value }));
     },
     read: (stream, buffer, offset, length, position) => {
+      logCall("streamOps.read", {
+        path: realPath(stream.object),
+        offset,
+        length,
+        position,
+      });
       if (length <= 0) return 0;
       const isStream = isCustomStream(stream);
       const fileLength = isStream ? stream.fileData!.length : 0;
@@ -241,6 +269,12 @@ const methods = (
       return size;
     },
     write: (stream, buffer, offset, length, position) => {
+      logCall("streamOps.write", {
+        path: realPath(stream.object),
+        offset,
+        length,
+        position,
+      });
       if (length <= 0) return 0;
       (stream.object as CustomNode).timestamp = Date.now();
 
@@ -266,6 +300,11 @@ const methods = (
       }
     },
     llseek: (stream, offset, whence) => {
+      logCall("streamOps.llseek", {
+        path: realPath(stream.object),
+        offset,
+        whence,
+      });
       let position = offset;
       if (whence === SEEK_CUR) {
         position += stream.position;
@@ -308,21 +347,32 @@ const methods = (
     return node;
   };
 
-  return { nodeOps, streamOps, createNode };
+  return {
+    nodeOps,
+    streamOps,
+    createNode,
+  };
 };
 
 export class EMFS implements Emscripten.FileSystemType {
   readonly methods: ReturnType<typeof methods>;
+  readonly FS: PyodideAPI["FS"];
 
-  constructor(pyodide: PyodideAPI, custom: NotebookFilesystemSync) {
+  constructor(
+    pyodide: PyodideAPI,
+    custom: NotebookFilesystemSync,
+    log: boolean = false,
+  ) {
+    this.FS = pyodide.FS;
     this.methods = methods(
       pyodide as PyodideAPI & { FS: AdvancedEmscriptenFS },
       custom,
+      log,
     );
   }
 
   mount(_: FS.Mount) {
-    return this.methods.createNode(null, "/", DIR_MODE, 0);
+    return this.methods.createNode(null, "/", DIR_MODE);
   }
 
   syncfs(

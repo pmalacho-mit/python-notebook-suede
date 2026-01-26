@@ -1,6 +1,18 @@
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
+export type Typed<T extends Record<string, any>> = {
+  [K in keyof T]: { type: K } & T[K];
+}[keyof T];
+
+export type SyncResult<T, E = Error> =
+  | {
+      ok: true;
+      data: T;
+    }
+  | {
+      ok: false;
+      status: number;
+      error: E;
+      detail?: string;
+    };
 
 export interface FlatPromise<T = any, E = any> {
   resolve: (value?: T) => void;
