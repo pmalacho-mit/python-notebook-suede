@@ -10,18 +10,20 @@
     enableMonacoAutoHeight,
     installNotebookCellKeybindings,
   } from "./monaco";
-  import { CellEvents } from "./Notebook.svelte";
+  import type { CellEvents } from "./Notebook.svelte";
 
   let {
     kernel,
     model,
     getRunID,
     selected,
+    reveal,
   }: {
     kernel: PythonKernel;
     model: Model;
     getRunID: () => number;
     selected: boolean;
+    reveal: () => void;
   } = $props();
 
   let runID = $state<number>();
@@ -29,31 +31,62 @@
     "initial",
   );
 
-  let rawOutput = $state<any>();
-  let errorOutput = $state<string>();
+  type OutputStatus = "ok" | "error";
+
+  let outputs = $state<{ values: any[]; status: OutputStatus }[]>();
+
   let outputElement = $state<HTMLElement>();
-  let editorContainer = $state<HTMLElement>();
+  let container = $state<HTMLElement>();
+
+  let editor = $state<monaco.editor.IStandaloneCodeEditor>();
 
   const preRun = () => {
     runID = getRunID();
     outputElement?.childNodes.forEach((child) => child.remove());
-    rawOutput = undefined;
-    errorOutput = undefined;
+    outputs = undefined;
     status = "queued";
   };
 
+  const output = (status: OutputStatus, value: any) => {
+    if (outputs && outputs.length > 0) {
+      const last = outputs[outputs.length - 1];
+      if (last.status === status) return last.values.push(value);
+    }
+
+    (outputs ??= []).push({ status, values: [value] });
+  };
+
+  const focus = (target: "start" | "end" = "start") => {
+    reveal();
+    editor?.focus();
+    if (target === "end") {
+      const model = editor?.getModel();
+      if (model) {
+        const lineCount = model.getLineCount();
+        const lastLineLength = model.getLineMaxColumn(lineCount);
+        editor?.setPosition({ lineNumber: lineCount, column: lastLineLength });
+      }
+    }
+  };
+
+  const select = () => {
+    if (selected) return;
+    (model as any as { events: CellEvents }).events.fire("request select");
+  };
+
   const on = {
-    start: () => {
-      status = "running";
-    },
-    complete: () => {
-      status = "completed";
-    },
+    start: () => (status = "running"),
+    complete: () => (status = "completed"),
     output: {
       html: (element: HTMLElement) => outputElement!.appendChild(element),
-      raw: (data: any) => (rawOutput = data),
+      raw: (data: any) => output("ok", data),
     },
-    error: (msg: string) => (errorOutput = msg),
+    error: (msg: string) => {
+      output("error", msg);
+      focus();
+    },
+    console: (level: "log" | "warn" | "error", msg: string) =>
+      level === "log" ? on.output.raw(msg) : on.error(msg),
   } as const;
 
   let task: Run.Job | undefined = undefined;
@@ -67,16 +100,52 @@
     task.on("output", "html", on.output.html);
     task.on("output", "raw", on.output.raw);
     task.on("error", on.error);
+    task.on("console", on.console);
   };
 
-  const ok = $derived(status === "completed" && errorOutput === undefined);
-  const error = $derived(status === "completed" && errorOutput !== undefined);
+  const interrupt = () => {
+    task?.interrupt();
+    status = "completed";
+  };
+
+  const inflight = $derived(status === "queued" || status === "running");
 
   $effect(() => {
-    if (selected) {
-      editorContainer?.querySelector("textarea")?.focus();
-    }
+    if (selected) focus();
   });
+
+  const focusNext = () =>
+    (model as any as { events: CellEvents }).events.fire(
+      "request select next",
+      "code",
+    );
+
+  const focusPrevious = () =>
+    (model as any as { events: CellEvents }).events.fire(
+      "request select previous",
+      "code",
+    );
+
+  const runAndFocusNext = () => (run(), focusNext());
+
+  const controls = { run, runAndFocusNext, focusNext, focusPrevious };
+
+  const onEditor = (
+    _editor: monaco.editor.IStandaloneCodeEditor,
+  ): monaco.IDisposable => {
+    editor = _editor;
+
+    const disposables = [
+      editor.onDidFocusEditorText(select),
+      installNotebookCellKeybindings(editor, controls),
+    ];
+
+    if (container)
+      disposables.push(enableMonacoAutoHeight({ editor, container }));
+
+    const dispose = () => disposables.forEach(({ dispose }) => dispose());
+    return { dispose };
+  };
 </script>
 
 <div class="cell" class:selected>
@@ -101,84 +170,42 @@
         <button
           class="run-btn"
           aria-label="run"
-          onclick={status === "completed" || status === "initial"
-            ? run
-            : () => {
-                task?.interrupt();
-                status = "completed";
-              }}
+          onclick={inflight ? interrupt : run}
         >
         </button>
-        {#if status !== "initial" && status !== "completed"}
-          <em>{status}</em>
-        {/if}
+        {#if inflight}<em>{status}</em>{/if}
       </div>
     </div>
-    <div class="cell-body">
+    <div
+      class="cell-body"
+      role="button"
+      tabindex={1}
+      onkeypress={(event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        if (editor?.hasTextFocus()) return;
+        event.preventDefault();
+        select();
+      }}
+      onclick={({ y, currentTarget }) => {
+        const rect = currentTarget.getBoundingClientRect();
+        const midpoint = rect.top + rect.height / 2;
+        focus(y < midpoint ? "start" : "end");
+      }}
+    >
       <div class="cell-toolbar">Code</div>
-      <div class="editor" bind:this={editorContainer}>
-        <Editor.Component
-          file={model}
-          onEditor={(editor) => {
-            const disposables = new Set<monaco.IDisposable>();
-            const capture = (disposable: monaco.IDisposable) =>
-              disposables.add(disposable);
-
-            capture(
-              enableMonacoAutoHeight({
-                editor,
-                container: editorContainer!,
-              }),
-            );
-
-            capture(
-              editor.onDidFocusEditorText(() => {
-                if (!selected) {
-                  (model as any as { events: CellEvents }).events.fire(
-                    "request select",
-                  );
-                }
-              }),
-            );
-
-            capture(
-              installNotebookCellKeybindings({
-                editor,
-                runCell: () => run(),
-                runCellAndFocusNext: () => {
-                  run();
-                  (model as any as { events: CellEvents }).events.fire(
-                    "request select next",
-                    "code",
-                  );
-                },
-                focusNextCell: () => {
-                  (model as any as { events: CellEvents }).events.fire(
-                    "request select next",
-                    "code",
-                  );
-                },
-                focusPrevCell: () => {},
-              }),
-            );
-
-            return {
-              dispose: () => disposables.forEach((d) => d.dispose()),
-            };
-          }}
-        />
+      <div class="editor" bind:this={container}>
+        <Editor.Component file={model} {onEditor} />
       </div>
       <div class="output">
-        {#if rawOutput !== undefined || errorOutput !== undefined}
-          <div class="output-box" class:ok class:error>
-            {#if rawOutput !== undefined}
-              {rawOutput}
-            {/if}
-            {#if errorOutput !== undefined}
-              {errorOutput}
-            {/if}
+        {#each outputs as { status, values }}
+          <div class="output-box {status}">
+            {#each values as value}
+              <div style:white-space="pre-line">
+                {value}
+              </div>
+            {/each}
           </div>
-        {/if}
+        {/each}
       </div>
     </div>
   </div>
@@ -242,6 +269,7 @@
     position: relative;
   }
 
+  /** need to make play a stop button on run */
   .run-btn::after {
     content: "";
     position: absolute;
