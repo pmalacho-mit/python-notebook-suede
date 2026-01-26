@@ -1,15 +1,36 @@
 {
 	"name": "python-notebook-suede",
-	"private": true,
 	"version": "0.0.1",
+	"private": true,
 	"type": "module",
 	"scripts": {
-		"dev": "vite dev",
 		"build": "vite build",
-		"preview": "vite preview",
-		"prepare": "svelte-kit sync || echo ''",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
-		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch"
+		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+		"dev": "vite dev",
+		"prepare": "svelte-kit sync || echo ''",
+		"preview": "vite preview"
+	},
+	"dependencies": {
+		"@codingame/esbuild-import-meta-url-plugin": "^1.0.3",
+		"@codingame/monaco-vscode-files-service-override": "~5.1.1",
+		"@codingame/monaco-vscode-python-default-extension": "~5.1.1",
+		"@typefox/pyright-browser": "^1.1.299",
+		"buffer": "^6.0.3",
+		"jszip": "^3.10.1",
+		"katex": "^0.16.27",
+		"marked": "^17.0.1",
+		"monaco-editor": "npm:@codingame/monaco-vscode-editor-api@~5.1.1",
+		"monaco-editor-wrapper": "~5.1.1",
+		"monaco-languageclient": "~8.4.0",
+		"nanoid": "^5.1.6",
+		"pyodide": "^0.29.2",
+		"vite-plugin-static-copy": "^3.1.0",
+		"vscode": "npm:@codingame/monaco-vscode-api@~5.1.1",
+		"vscode-languageclient": "~9.0.1",
+		"vscode-languageserver-protocol": "^3.17.5",
+		"y-monaco": "^0.1.6",
+		"y-protocols": "^1.0.6"
 	},
 	"devDependencies": {
 		"@sveltejs/adapter-auto": "^7.0.0",
@@ -21,11 +42,5 @@
 		"tailwindcss": "^4.1.17",
 		"typescript": "^5.9.3",
 		"vite": "^7.2.6"
-	},
-	"dependencies": {
-		"buffer": "^6.0.3",
-		"katex": "^0.16.27",
-		"nanoid": "^5.1.6",
-		"pyodide": "^0.29.2"
 	}
 }

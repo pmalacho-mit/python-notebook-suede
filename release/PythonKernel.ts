@@ -1,20 +1,66 @@
 /// <reference types="vite/client" />
 
-import KernelWorker from "./starboard-python/worker/kernel-worker?worker";
-import { AsyncMemory } from "./starboard-python/worker/async-memory";
-import { ObjectProxyHost } from "./starboard-python/worker/object-proxy";
-import type { Kernel } from "./starboard-python//worker/kernel-worker";
-import type { NotebookFilesystemSync } from "./starboard-python/worker/emscripten-fs";
+import KernelWorker from "./worker/kernel-worker?worker";
+import { AsyncMemory } from "./worker/async-memory";
+import { ObjectProxyHost } from "./worker/object-proxy";
+import type { Kernel } from "./worker/kernel-worker";
+import type { NotebookFilesystemSync } from "./worker/emscripten-fs";
 import { nanoid } from "nanoid";
 import { render } from "katex";
-import type { RunCodeResult } from "./starboard-python/worker/pyodide-instance";
-import { flatPromise } from "./starboard-python/flat-promise";
+import type { RunCodeResult } from "./worker/pyodide-instance";
+import { flatPromise } from "./utils";
+
+export type Environment = {
+  fs: NotebookFilesystemSync & { root: string };
+  input: (prompt: string) => string;
+};
+
+export namespace Run {
+  type Callback<T extends any[] = []> = (...args: T) => any;
+
+  export type OutputKey = "html" | "raw";
+
+  export interface On<Return = void> {
+    (
+      event: "output",
+      type: "html",
+      callback: Callback<[element: HTMLElement]>,
+    ): Return;
+    (event: "output", type: "raw", callback: Callback<[data: any]>): Return;
+    (
+      event: "console",
+      callback: Callback<[type: "log" | "error" | "warn", msg: string]>,
+    ): Return;
+    (event: "error", callback: Callback<[value: string]>): Return;
+    (event: "start", callback: Callback): Return;
+    (event: "complete", callback: Callback): Return;
+  }
+
+  export interface Fire<Return = void> {
+    (event: "output", type: OutputKey, element: HTMLElement): Return;
+    (event: "output", type: OutputKey, data: any): Return;
+    (event: "console", type: "log" | "error" | "warn", msg: string): Return;
+    (event: "error", value: string): Return;
+    (event: "start"): Return;
+    (event: "complete"): Return;
+  }
+
+  export type Job = Expand<{
+    interrupt: () => void;
+    result: Promise<any>;
+    on: On;
+  }>;
+}
+
+const defaultPath = (env: Environment) => env.fs.root + "/temp.py";
 
 const handleMessages = ({
   worker,
   objectProxyHost,
   asyncMemory,
   runningCode,
+  loadingCode,
+  consoleCallbacks,
 }: PythonKernel) =>
   worker.addEventListener("message", (ev: MessageEvent) => {
     if (!ev.data) {
@@ -28,13 +74,16 @@ const handleMessages = ({
       data.type === "proxy_shared_memory" ||
       data.type === "proxy_print_object" ||
       data.type === "proxy_promise"
-    ) {
+    )
       objectProxyHost.handleProxyMessage(data, asyncMemory);
-    } else if (data.type === "result") {
+    else if (data.type === "result") {
       runningCode.get(data.id)?.(data.value);
       objectProxyHost?.clearTemporary();
-    } else if (data.type === "console") console[data.method](...data.data);
-    else if (data.type === "error") console.error(data.error);
+    } else if (data.type === "console") {
+      consoleCallbacks.forEach((cb) => cb(data.method, data.data));
+      console[data.method](...data.data);
+    } else if (data.type === "error") console.error(data.error);
+    else if (data.type === "loaded") loadingCode.get(data.id)?.();
   });
 
 async function convertResult(data: RunCodeResult) {
@@ -65,18 +114,30 @@ async function convertResult(data: RunCodeResult) {
 const isPyProxy = (jsobj: any) =>
   !!jsobj && jsobj.$$ !== undefined && jsobj.$$.type === "PyProxy";
 
-type AddEntry = (payload: { method: "error" | "result"; data: any }) => void;
-
 // Just putting HTML with script tags on the DOM will not get them evaluated
 // Using this hack we execute them anyway
-const evalScriptTagsHack = (element: HTMLElement) =>
+const evalScriptTagsHack = (element: Element) =>
   element
     .querySelectorAll('script[type|="text/javascript"]')
     .forEach(function (e) {
       if (e.textContent !== null) eval(e.textContent);
     });
 
-const processProxyResult = (result: any, htmlOutput: HTMLElement) => {
+const appendHtmlOutput = (
+  htmlOutput: HTMLElement,
+  fire: Run.Fire,
+  child: HTMLElement,
+) => {
+  htmlOutput.appendChild(child);
+  fire("output", "html", htmlOutput);
+  evalScriptTagsHack(htmlOutput);
+};
+
+const tryProcessProxyResultAsHTML = (
+  result: any,
+  htmlOutput: HTMLElement,
+  fire: Run.Fire,
+) => {
   if (result._repr_html_ !== undefined) {
     const representation = result._repr_html_();
     if (typeof representation === "string") {
@@ -86,8 +147,7 @@ const processProxyResult = (result: any, htmlOutput: HTMLElement) => {
         new DOMParser().parseFromString(representation, "text/html").body
           .firstChild!,
       );
-      htmlOutput.appendChild(div);
-      evalScriptTagsHack(div);
+      appendHtmlOutput(htmlOutput, fire, div);
       return true;
     }
   } else if (result._repr_latex_ !== undefined) {
@@ -110,7 +170,7 @@ const processProxyResult = (result: any, htmlOutput: HTMLElement) => {
           displayMode: false,
         });
       }
-      htmlOutput.appendChild(div);
+      appendHtmlOutput(htmlOutput, fire, div);
       return true;
     }
   }
@@ -120,46 +180,45 @@ const processProxyResult = (result: any, htmlOutput: HTMLElement) => {
 const processResult = (
   result: any,
   htmlOutput: HTMLElement,
-  addEntry: AddEntry,
-): { error: any } | undefined => {
+  fire: Run.Fire,
+) => {
   if (result == undefined) return;
-
   if (result instanceof HTMLElement) {
     htmlOutput.appendChild(result);
-    evalScriptTagsHack(result);
+    fire("output", "html", result);
   } else if (
-    typeof result === "object" &&
-    result.name === "PythonError" &&
-    result.__error_address
-  ) {
-    addEntry({ method: "error", data: `${result.toString()}` });
-    return { error: result };
-  } else if (!isPyProxy(result)) {
-    addEntry({ method: "result", data: result });
-  } else if (!processProxyResult(result, htmlOutput))
-    addEntry({ method: "result", data: result });
+    (typeof result === "object" &&
+      result.name === "PythonError" &&
+      result.__error_address) ||
+    (typeof result === "string" && result.includes("Traceback"))
+  )
+    fire("error", `${result.toString()}`);
+  else if (!isPyProxy(result)) fire("output", "raw", result);
+  else if (!tryProcessProxyResultAsHTML(result, htmlOutput, fire))
+    fire("output", "raw", result);
 };
-
-type Environment = {
-  fs: NotebookFilesystemSync & { root: string };
-  input: () => string;
-};
-
-let i = 0;
 
 export default class PythonKernel {
   readonly worker = new KernelWorker();
   readonly asyncMemory = new AsyncMemory();
   readonly objectProxyHost = new ObjectProxyHost(this.asyncMemory);
   readonly runningCode = new Map<string, (value: RunCodeResult) => void>();
+  readonly loadingCode = new Map<string, () => void>();
+  readonly environment: Environment;
 
-  runChain = Promise.resolve();
+  readonly consoleCallbacks = new Set<
+    (type: "log" | "error" | "warn", data: any[]) => void
+  >();
 
   readonly loaded: Promise<void>;
 
-  currentHtmlOutputElement: HTMLElement | null = null;
+  private runChain = Promise.resolve();
+  private currentHtmlOutputElement: HTMLElement | null = null;
 
-  constructor({ fs, input }: Environment) {
+  constructor(environment: Environment) {
+    this.environment = environment;
+    const { fs, input } = environment;
+
     handleMessages(this);
     const { worker, objectProxyHost } = this;
     const drawCanvas = this.drawCanvas.bind(this);
@@ -225,23 +284,27 @@ export default class PythonKernel {
     this.asyncMemory.clearInterrupt();
   }
 
-  runFile(
-    code: string,
-    path: string,
-    renderOutputTarget: HTMLElement,
-    addEntry: AddEntry,
-  ) {
-    const { runningCode, worker, loaded, runChain } = this;
+  run(code: string): Run.Job;
+  run(request: { code: string; path?: string }): Run.Job;
+  run(arg: string | { code: string; path?: string }): Run.Job {
+    const code = typeof arg === "string" ? arg : arg.code;
+    const path =
+      typeof arg === "string"
+        ? defaultPath(this.environment)
+        : (arg.path ?? defaultPath(this.environment));
+
+    const {
+      runningCode,
+      loadingCode,
+      worker,
+      loaded: packages,
+      runChain,
+    } = this;
 
     const done = flatPromise();
 
     const alreadyRunning = runChain.catch((_) => 0);
     this.runChain = done.promise;
-
-    const index = i++;
-    done.promise.then(() => {
-      console.log("Finished running code", index);
-    });
 
     let executing = false;
     let doExecute = true;
@@ -249,64 +312,111 @@ export default class PythonKernel {
     const interrupt = () => {
       if (executing) {
         this.interrupt();
-        done.reject("Execution interrupted");
+        done.resolve();
       } else doExecute = false;
     };
 
+    type Callback = (...args: any[]) => void;
+    const callbacks = new Map<string, Callback[]>();
+    const set = (event: string, callback: Callback) =>
+      callbacks.get(event)?.push(callback) ?? callbacks.set(event, [callback]);
+    const exec = (event: string, ...args: any[]) =>
+      callbacks.get(event)?.forEach((cb) => cb(...args));
+
+    const on: Run.On<null> = (event, ...args: any[]) => {
+      switch (event) {
+        case "output":
+          const [type, callback] = args as [Run.OutputKey, (arg: any) => void];
+          set(type, callback);
+          return null;
+        case "start":
+        case "complete":
+        case "error":
+        case "console":
+          set(event, args[0]);
+          return null;
+      }
+    };
+
+    const fire: Run.Fire<null> = (event, ...args: any[]) => {
+      switch (event) {
+        case "output":
+          const [type, payload] = args as [Run.OutputKey, any];
+          exec(type, payload);
+          return null;
+        case "start":
+        case "complete":
+        case "error":
+        case "console":
+          exec(event, ...args);
+          return null;
+      }
+    };
+
+    const onConsole: Parameters<typeof this.consoleCallbacks.add>[0] = (
+      type,
+      data,
+    ) => fire("console", type, data.join(" "));
+
     const result = new Promise<any>(async (resolve) => {
-      await loaded;
+      await packages;
       await alreadyRunning;
 
       if (!doExecute) return resolve(undefined);
 
-      executing = true;
-
       this.clearInterrupt();
+      fire("start");
+
+      this.consoleCallbacks.add(onConsole);
 
       const htmlOutput = document.createElement("div");
-
-      renderOutputTarget.appendChild(htmlOutput);
-
       this.currentHtmlOutputElement = htmlOutput;
 
       const id = nanoid();
 
       let result: any = undefined;
-      let error: any = undefined;
 
       try {
-        result = await new Promise<any>((resolve, reject) => {
+        const packages = new Promise<boolean>((resolve) =>
+          loadingCode.set(id, () => resolve(loadingCode.delete(id))),
+        );
+
+        const execution = new Promise<any>((resolve, reject) =>
           runningCode.set(id, (result) => {
-            convertResult(result).then(resolve);
-            runningCode.delete(id);
-          });
+            try {
+              convertResult(result).then(resolve);
+            } catch (e) {
+              reject(e);
+            } finally {
+              runningCode.delete(id);
+            }
+          }),
+        );
 
-          try {
-            const msg = { type: "run", id, code, file: path } as const;
-            worker.postMessage(msg satisfies Kernel.Request);
-          } catch (e) {
-            console.warn(e, code);
-            reject(e);
-            runningCode.delete(id);
-          }
-        });
+        const msg = { type: "run", id, code, file: path } as const;
+        worker.postMessage(msg satisfies Kernel.Request);
 
-        const processed = processResult(result, htmlOutput, addEntry);
-        if (processed?.error !== undefined) error = processed.error;
+        await packages;
+        if (!doExecute) return resolve(undefined);
+
+        executing = true;
+        result = await execution;
+
+        processResult(result, htmlOutput, fire);
       } catch (e: any) {
-        error = e;
-        addEntry({
-          method: "error",
-          data: `${e.name} ${e.message}`,
-        });
+        fire("error", `${e.name} ${e.message}`);
       }
 
-      done.resolve();
-      if (error !== undefined) throw error;
-
       resolve(result);
+    }).then(() => {
+      done.resolve();
+      fire("complete");
+      result.then((v) => {
+        console.log(v);
+      });
+      this.consoleCallbacks.delete(onConsole);
     });
 
-    return { interrupt, result };
+    return { interrupt, result, on };
   }
 }

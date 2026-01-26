@@ -8,7 +8,7 @@
 // https://github.com/curiousdannii/emglken/blob/master/src/emglkenfs.js
 
 import type { PyodideAPI } from "pyodide";
-import type { SyncResult } from "./utils";
+import type { SyncResult } from "../utils";
 
 export interface NotebookFilesystemSync {
   /**

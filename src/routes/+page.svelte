@@ -1,64 +1,85 @@
-<script lang="ts">
-  import { runStarboardPython } from "../../release/starboard-python/run";
-  let element = $state<HTMLElement>();
-
-  const runtime = {
-    fs: {
-      get(opts: { path: string }) {
-        console.log("fs.get invoked with:", opts);
-        return { ok: true as const, data: null };
-      },
-      put(opts: { path: string; value: string | null }) {
-        console.log("fs.put invoked with:", opts);
-        return { ok: true as const, data: undefined };
-      },
-      delete(opts: { path: string }) {
-        console.log("fs.delete invoked with:", opts);
-        return { ok: true as const, data: undefined };
-      },
-      move(opts: { path: string; newPath: string }) {
-        console.log("fs.move invoked with:", opts);
-        return { ok: true as const, data: undefined };
-      },
-      listDirectory(opts: { path: string }) {
-        console.log("fs.listDirectory invoked with:", opts);
-        return { ok: true as const, data: [] };
-      },
-      stat: (opts: { path: string }) =>
-        console.log("fs.stat invoked with:", opts),
-    },
+<script lang="ts" module>
+  export type CellEntry = {
+    type: "code" | "markdown";
+    content: string;
   };
 
-  $effect(() => {
-    if (!element) return;
+  /**
+   * Extract markdown + python code cells from an .ipynb file.
+   * - Preserves original cell order
+   * - Normalizes cell.source (string | string[]) → string
+   * - Treats all code cells as python (standard Jupyter assumption)
+   */
+  export function parseIpynb(ipynb: string | unknown): CellEntry[] {
+    const notebook = typeof ipynb === "string" ? JSON.parse(ipynb) : ipynb;
 
-    runStarboardPython(runtime, `import regex`, element, (entry) => {
-      console.log("Python output entry:", entry);
-    });
+    if (
+      !notebook ||
+      typeof notebook !== "object" ||
+      !Array.isArray((notebook as any).cells)
+    ) {
+      throw new Error("Invalid ipynb: missing cells array");
+    }
 
-    new Promise((resolve) => setTimeout(resolve, 1000)).then(async () => {
-      const x = await runStarboardPython(
-        runtime,
-        `import os
-import pandas
-pandas_path = os.path.dirname(pandas.__file__)
-parsers_file_path = os.path.join(pandas_path, '_libs', 'parsers.pyx')
-print(f"The file is located at: {parsers_file_path}")
+    const entries: CellEntry[] = [];
 
-# Read the content of the file
-with open(parsers_file_path, 'r', encoding='utf-8') as file:
-    content = file.read()
-print("Content of parsers.pyx:")
-print(content)
-`,
-        element!,
-        (entry) => {
-          console.log("Python output entry:", entry);
-        },
-      );
-      console.log("Result of print(x):", x);
-    });
-  });
+    for (const cell of (notebook as any).cells) {
+      if (!cell || typeof cell !== "object") continue;
+
+      const { cell_type, source } = cell as any;
+
+      if (cell_type !== "markdown" && cell_type !== "code") continue;
+
+      const content =
+        typeof source === "string"
+          ? source
+          : Array.isArray(source)
+            ? source.join("")
+            : "";
+
+      if (!content.trim()) continue;
+
+      entries.push({
+        type: cell_type === "markdown" ? "markdown" : "code",
+        content,
+      });
+    }
+
+    return entries;
+  }
 </script>
 
-<div bind:this={element}></div>
+<script lang="ts">
+  import { resolve } from "$app/paths";
+  import Notebook, { Model } from "../../release/Notebook.svelte";
+  let selection = $state<"part1" | "part2" | "homework1">();
+</script>
+
+<div>
+  <select bind:value={selection}>
+    <option value="part1">Intro Part 1</option>
+    <option value="part2">Intro Part 2</option>
+    <option value="homework1">Homework 1</option>
+  </select>
+</div>
+
+<div style="background: #f3f4f6; padding: 1rem; margin-top: 1rem;">
+  {#if selection}
+    {#await fetch(resolve(`/${selection}.ipynb` as any)) then response}
+      {#await response.text() then ipynbText}
+        <Notebook
+          model={new Model({
+            cells: parseIpynb(ipynbText),
+            realpath: `${selection}.ipynb`,
+          })}
+        />
+      {:catch error}
+        <p style="color: red;">
+          Error reading notebook content: {error.message}
+        </p>
+      {/await}
+    {:catch error}
+      <p style="color: red;">Error loading notebook: {error.message}</p>
+    {/await}
+  {/if}
+</div>

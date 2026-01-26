@@ -6,7 +6,7 @@ import {
   type ProxyMessages,
 } from "./object-proxy";
 import { PyodideInstance } from "./pyodide-instance";
-import type { Typed } from "./utils";
+import type { Typed } from "../utils";
 
 export namespace Kernel {
   export type Requests = {
@@ -47,6 +47,9 @@ export namespace Kernel {
     initialized: {};
     kernel_initialized: {
       kernelId: string;
+    };
+    loaded: {
+      id: string;
     };
     result: {
       id: string;
@@ -109,6 +112,8 @@ const handler = {
   },
   onRun: async (manager, { id, code, file: filename }) => {
     try {
+      await manager.pyodide.load(code, filename);
+      manager.postMessage({ type: "loaded", id });
       const value = await manager.pyodide.runCode(code, filename);
       manager.postMessage({ type: "result", id, value });
     } catch (e) {
@@ -132,7 +137,7 @@ const handle = (manager: Kernel, msg: Kernel.Request) => {
 export class Kernel {
   /** BEGIN: Properties set by the initialize message */
   proxy!: ObjectProxyClient;
-  input!: () => string;
+  input!: (prompt: string) => string;
   syncFs!: NotebookFilesystemSync;
   pyodide!: PyodideInstance;
   /** END: Properties set by the initialize message */

@@ -8,6 +8,51 @@ export type RunCodeResult = {
   value: any; // TODO: Normal objects can be normal objects, python proxies might need a bit of comlink
 };
 
+const Char = {
+  NewLine: 10,
+} as const;
+
+const io = (
+  manager: Kernel,
+): {
+  [k in "stdin" | "stdout" | "stderr"]: Parameters<
+    PyodideAPI[`set${Capitalize<k>}`]
+  >[0];
+} => {
+  let acc = "";
+
+  const encoder = new TextEncoder();
+  let input = new Uint8Array();
+  let inputIndex = -1; // -1 means that we just returned null
+  const stdin = () => {
+    if (inputIndex === -1) {
+      const text = manager.input(acc);
+      input = encoder.encode(text + (text.endsWith("\n") ? "" : "\n"));
+      inputIndex = 0;
+    }
+
+    if (inputIndex < input.length) {
+      let character = input[inputIndex];
+      inputIndex++;
+      return character;
+    } else {
+      inputIndex = -1;
+      return null;
+    }
+  };
+
+  const raw = (charCode: number) => {
+    if (charCode === Char.NewLine) {
+      manager.log("log", acc);
+      acc = "";
+    } else acc += String.fromCharCode(charCode);
+  };
+
+  const batched = (output: string) => manager.log("error", output);
+
+  return { stdin: { stdin }, stdout: { raw }, stderr: { batched } };
+};
+
 export class PyodideInstance {
   readonly globalThisId: string;
   readonly drawCanvasId: string;
@@ -50,41 +95,20 @@ export class PyodideInstance {
       fullStdLib: false,
     });
 
+    const { stdin, stdout, stderr } = io(manager);
+
+    this.pyodide.setStdin(stdin);
+    this.pyodide.setStdout(stdout);
+    this.pyodide.setStderr(stderr);
+
     this.pyodide.setInterruptBuffer(this.interruptBuffer);
-
-    const stdinFunc = this.createStdin(manager);
-    this.pyodide.setStdin({
-      stdin: stdinFunc,
-    });
-
-    this.pyodide.setStdout({
-      // raw(charCode) {
-      //   if (charCode === 10) {
-      //     console.log("OUT: [newline]");
-      //   } else {
-      //     console.log("OUT RAW:", String.fromCharCode(charCode));
-      //   }
-      // },
-      batched: (output: string) => {
-        console.log("OUT:", output);
-      },
-    });
-
-    this.pyodide.setStderr({
-      batched: (output: string) => {
-        console.error("ERR:", output);
-      },
-    });
 
     this.pyodide.FS.mkdirTree(root);
     this.pyodide.FS.mount(new EMFS(this.pyodide, manager.syncFs), {}, root);
     this.pyodide.registerJsModule("js", this.proxiedGlobalThis);
   }
 
-  async runCode(
-    code: string,
-    filename: string,
-  ): Promise<RunCodeResult | undefined> {
+  async load(code: string, filename: string): Promise<void> {
     if (!this.pyodide) {
       console.warn("Worker has not yet been initialized");
       return;
@@ -94,6 +118,8 @@ export class PyodideInstance {
     // "Loading bla", "Bla was already loaded from default channel", "Loaded bla"
     let wasAlreadyLoaded: boolean | undefined = undefined;
     let msgBuffer: string[] = [];
+
+    this.pyodide.setInterruptBuffer(undefined as any); // Disable interrupts while loading packages
 
     await this.pyodide.loadPackagesFromImports(code, {
       messageCallback: (msg) => {
@@ -125,6 +151,16 @@ export class PyodideInstance {
         }
       },
     });
+  }
+
+  async runCode(
+    code: string,
+    filename: string,
+  ): Promise<RunCodeResult | undefined> {
+    if (!this.pyodide) {
+      console.warn("Worker has not yet been initialized");
+      return;
+    }
 
     let result = await this.pyodide
       .runPythonAsync(code, { filename })
@@ -154,15 +190,13 @@ export class PyodideInstance {
     };
   }
 
-  io(manager: Kernel) {}
-
-  createStdin(manager: Kernel) {
+  createStdin(manager: Kernel, getLastLine: () => string) {
     const encoder = new TextEncoder();
     let input = new Uint8Array();
     let inputIndex = -1; // -1 means that we just returned null
     function stdin() {
       if (inputIndex === -1) {
-        const text = manager.input();
+        const text = manager.input(getLastLine());
         input = encoder.encode(text + (text.endsWith("\n") ? "" : "\n"));
         inputIndex = 0;
       }
