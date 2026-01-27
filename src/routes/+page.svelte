@@ -71,7 +71,7 @@
     style="background: #f3f4f6; padding: 1rem; margin-top: 1rem;"
   >
     {#if selection}
-      {#await fetch(resolve(`/${selection}.ipynb` as any)) then response}
+      {#await fetch(resolve(`./${selection}.ipynb` as any)) then response}
         {#await response.text() then ipynbText}
           <Notebook
             model={new Model({

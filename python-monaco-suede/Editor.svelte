@@ -38,6 +38,29 @@
     await editor.dispose();
   };
 
+  type Diagnostic = {
+    code: { value: string };
+    range: { start: { line: number } };
+  };
+  const filterUnusedClosingStatement = (
+    uri: monaco.Uri,
+    diagnostics: Diagnostic[],
+    model?: monaco.editor.ITextModel,
+    lines?: string[],
+  ) => {
+    model ??= monaco.editor.getModel(uri)!;
+    lines ??= model.getLinesContent();
+    let lineCount = lines.length;
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (lines[i].trim() === "") lineCount--;
+      else break;
+    }
+    return diagnostics.filter((diagnostic) => {
+      if (diagnostic.code.value !== "reportUnusedExpression") return true;
+      return diagnostic.range.start.line + 1 !== lineCount;
+    });
+  };
+
   const createLanguageClient = async (workspaceUri: monaco.Uri) => {
     await initServices();
     const pyrightWorker = getPyrightWorker();
@@ -57,6 +80,19 @@
         },
         clientOptions: {
           documentSelector: ["python"],
+          middleware: {
+            handleDiagnostics: (uri, diagnostics, next) => {
+              const model = monaco.editor.getModel(uri)!;
+              const lines = model.getLinesContent();
+              diagnostics = filterUnusedClosingStatement(
+                uri,
+                diagnostics,
+                model,
+                lines,
+              );
+              next(uri, diagnostics);
+            },
+          },
           workspaceFolder: {
             index: 0,
             name: "workspace",

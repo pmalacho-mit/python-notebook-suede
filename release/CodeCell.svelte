@@ -1,4 +1,5 @@
 <script lang="ts" module>
+  import { mixin } from "../mixin-suede";
   export class Model extends Editor.Model {}
 </script>
 
@@ -57,15 +58,23 @@
   };
 
   const focus = (target: "start" | "end" = "start") => {
-    reveal();
     editor?.focus();
-    if (target === "end") {
-      const model = editor?.getModel();
-      if (model) {
-        const lineCount = model.getLineCount();
-        const lastLineLength = model.getLineMaxColumn(lineCount);
-        editor?.setPosition({ lineNumber: lineCount, column: lastLineLength });
-      }
+    reveal();
+
+    switch (target) {
+      case "start":
+        editor?.setPosition({ lineNumber: 1, column: 1 });
+        break;
+      case "end":
+        const model = editor?.getModel();
+        if (model) {
+          const lineCount = model.getLineCount();
+          const lastLineLength = model.getLineMaxColumn(lineCount);
+          editor?.setPosition({
+            lineNumber: lineCount,
+            column: lastLineLength,
+          });
+        }
     }
   };
 
@@ -186,14 +195,23 @@
         event.preventDefault();
         select();
       }}
-      onclick={({ y, currentTarget }) => {
+      onclick={({ target, y, currentTarget }) => {
+        if (editor?.hasTextFocus()) return;
         const rect = currentTarget.getBoundingClientRect();
         const midpoint = rect.top + rect.height / 2;
+        console.log({ y, midpoint });
         focus(y < midpoint ? "start" : "end");
       }}
     >
       <div class="cell-toolbar">Code</div>
-      <div class="editor" bind:this={container}>
+      <div
+        class="editor"
+        bind:this={container}
+        onclick={(e) => e.stopPropagation()}
+        onkeydown={(e) => e.stopPropagation()}
+        role="button"
+        tabindex={1}
+      >
         <Editor.Component file={model} {onEditor} />
       </div>
       <div class="output">

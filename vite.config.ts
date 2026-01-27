@@ -20,4 +20,7 @@ export default applyConfig(
       format: "es",
     },
   }),
+  {
+    base: `"./"`,
+  },
 );

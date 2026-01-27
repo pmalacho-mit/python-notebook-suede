@@ -8,18 +8,24 @@ import { resolve } from "node:path";
 import { existsSync } from "node:fs";
 
 /**
+ * @typedef {object} ApplyOptions
+ * @property {string} [base] Base URL to embed into PYTHON_MONACO_BASE
+ */
+
+/**
  *
  * @param {import('vite').UserConfig} current
+ * @param {ApplyOptions} [options]
  * @return {import('vite').UserConfig}
  */
-export const applyConfig = (current) => {
+export const applyConfig = (current, options = {}) => {
   current.server ??= {};
   current.server.host ??= "0.0.0.0";
   current.server.fs ??= {};
   current.server.fs.allow ??= [];
   current.server.fs.allow.push(suederoot);
   current.define ??= {};
-  current.define["PYTHON_MONACO_BASE"] = current.base ?? `"/"`;
+  current.define["PYTHON_MONACO_BASE"] = options?.base ?? current.base ?? `"/"`;
   current.plugins ??= [];
 
   const node_modules = findNearestNodeModules(suederoot);
