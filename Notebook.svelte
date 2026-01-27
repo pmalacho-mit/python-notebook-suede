@@ -142,12 +142,14 @@
 </script>
 
 <div
-  style:height="100%"
-  style="padding: 1rem; display: flex; flex-direction: column; gap: 1rem;"
   bind:this={container}
+  style:height="100%"
+  style:padding="1rem"
+  style:gap="1rem"
+  style:overflow="auto"
 >
   {#each model.cells as cell, index}
-    <div bind:this={wrappers[index]} style:height="fit-content">
+    <div bind:this={wrappers[index]}>
       {#if cell.type === "code"}
         {@const selected = selectedIndex === index}
         {@const reveal = () => scrollTo(index)}
