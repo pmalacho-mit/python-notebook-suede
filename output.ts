@@ -47,7 +47,7 @@ const src = (base64: string) => `data:image/png;base64,${base64}`;
 export function accessor(output: Output.Error): ErrorProperties;
 export function accessor(
   output: Output.Stream,
-): Partial<Record<"stdout" | "stderr", MultilineString>>;
+): Partial<Record<"out" | "err", MultilineString>>;
 export function accessor(
   output: Output.ExecuteResult,
 ): Partial<Record<"html" | "plain", string>>;

@@ -5,7 +5,7 @@ import {
   ObjectProxyClient,
   type ProxyMessages,
 } from "./object-proxy";
-import { PyodideInstance } from "./pyodide-instance";
+import { PyodideInstance } from "../pyodide/instance";
 import type { Typed } from "../utils";
 import { form, type Output } from "../output";
 
@@ -150,6 +150,7 @@ export class Kernel {
       "type"
     > as Kernel.Response<"output">;
     casted.type = "output";
+    console.log(output);
     this.postMessage(casted);
   }
 

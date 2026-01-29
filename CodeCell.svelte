@@ -219,6 +219,7 @@
   const onclick = $derived(inflight ? interrupt : run);
 
   const selectOnKey = (event: KeyboardEvent) => {
+    if (editor?.hasTextFocus()) return;
     if (event.key !== "Enter" && event.key !== " ") return;
     if (editor?.hasTextFocus()) return;
     event.preventDefault();
@@ -300,7 +301,7 @@
 
 {#snippet stream(output: Output.Stream)}
   {@const access = accessor(output)}
-  {@const text = access.stdout ?? access.stderr}
+  {@const text = access.out ?? access.err}
 
   {#if Array.isArray(text)}
     {#each text as line}
