@@ -11,7 +11,7 @@ export class EditableFile {
     name,
     parent,
     source = "",
-    sourceSync: sync = undefined,
+    sourceSync = undefined,
     readonly = false,
   }: Pick<EditableFile, "name"> & {
     parent: Pick<EditableFile, "path">;
@@ -20,6 +20,6 @@ export class EditableFile {
     this.path = $derived(`${parent.path}/${name}`);
     this.source = $state(source);
     this.readonly = $state(readonly);
-    this.sourceSync = $state(sync);
+    this.sourceSync = $state(sourceSync);
   }
 }

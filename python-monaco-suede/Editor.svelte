@@ -280,8 +280,6 @@
     });
     return () => dispose?.();
   });
-
-  $inspect(file.path);
 </script>
 
 <div style:width="100%" style:height="100%" bind:this={container}></div>
