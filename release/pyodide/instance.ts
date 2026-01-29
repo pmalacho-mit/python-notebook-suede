@@ -1,6 +1,6 @@
-import type { Kernel } from "./kernel-worker";
-import { EMFS } from "./emscripten-fs";
-import { patchMatplotlib, is as image } from "../pyodide/matplotlib";
+import type { Kernel } from "../worker/kernel-worker";
+import { EMFS } from "../worker/emscripten-fs";
+import { patchMatplotlib, is as image } from "./matplotlib";
 import { loadPyodide, version, type PyodideAPI } from "pyodide";
 import { form, type Output } from "../output";
 
@@ -143,33 +143,33 @@ export class PyodideInstance {
     if (!this.pyodide)
       return console.warn("Worker has not yet been initialized");
 
-    let returns = await this.pyodide
+    let result = await this.pyodide
       .runPythonAsync(code, { filename })
       .catch((error) => error);
 
-    if (returns === undefined || returns === null) return;
-    else if (returns instanceof this.pyodide.ffi.PyProxy) {
-      if (returns._repr_html_ !== undefined)
+    if (result === undefined || result === null) return;
+    else if (result instanceof this.pyodide.ffi.PyProxy) {
+      if (result._repr_html_ !== undefined)
         return form(
           "execute_result",
           "html",
-          this.destroyToJsResult(returns)._repr_html_(),
+          this.destroyToJsResult(result)._repr_html_(),
         );
-      else if (returns._repr_latex_ !== undefined)
+      else if (result._repr_latex_ !== undefined)
         return form(
           "execute_result",
           "latex",
-          this.destroyToJsResult(returns)._repr_latex_(),
+          this.destroyToJsResult(result)._repr_latex_(),
         );
-      else if (image(returns)) return form("display_data", "image", returns);
+      else if (image(result)) return form("display_data", "image", result);
       else
         return form(
           "execute_result",
           "plain",
-          this.destroyToJsResult(returns).__str__(),
+          this.destroyToJsResult(result).__str__(),
         );
-    } else if (returns instanceof this.pyodide.ffi.PythonError) {
-      const { message, type } = returns;
+    } else if (result instanceof this.pyodide.ffi.PythonError) {
+      const { message, type } = result;
       const ename = type;
       const evalue = message.split(`${type}: `)[1].trim();
       const lines = message.split("\n");
@@ -177,12 +177,7 @@ export class PyodideInstance {
       const traceback = lines.slice(firstFileLine);
       traceback.splice(0, 0, lines[0]); // Add the error type/message at the start
       return form("error", { ename, evalue, traceback });
-    } else {
-      console.error("Unexpected return type from Pyodide:", returns);
-      throw new Error(
-        `Unexpected return type from Pyodide (${typeof returns}): ${returns}`,
-      );
-    }
+    } else return form("execute_result", "plain", String(result));
   }
 
   private proxyGlobalThis(manager: Kernel, id?: string) {
