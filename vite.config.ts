@@ -12,7 +12,12 @@ export default applyConfig(
         "Cross-Origin-Opener-Policy": "same-origin",
       },
       fs: {
-        allow: ["./release", "./python-monaco-suede", "./with-events-suede"],
+        allow: [
+          "./release",
+          "./python-monaco-suede",
+          "./with-events-suede",
+          "./python-yjs-suede",
+        ],
       },
     },
     plugins: [tailwindcss(), sveltekit()],

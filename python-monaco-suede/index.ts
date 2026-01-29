@@ -12,3 +12,7 @@ export const Editor = {
   renameFile: (...args: Parameters<typeof singleton.registry.rename>) =>
     singleton.registry.rename(...args),
 };
+
+export namespace Editor {
+  export type Model = EditableFile;
+}

@@ -1,12 +1,8 @@
 import type { Kernel } from "./kernel-worker";
 import { EMFS } from "./emscripten-fs";
-import { patchMatplotlib } from "../pyodide/matplotlib";
+import { patchMatplotlib, is as image } from "../pyodide/matplotlib";
 import { loadPyodide, version, type PyodideAPI } from "pyodide";
-
-export type RunCodeResult = {
-  display?: "default" | "html" | "latex";
-  value: any; // TODO: Normal objects can be normal objects, python proxies might need a bit of comlink
-};
+import { form, type Output } from "../output";
 
 const Char = {
   NewLine: 10,
@@ -43,50 +39,37 @@ const io = (
 
   const raw = (charCode: number) => {
     if (charCode === Char.NewLine) {
-      manager.log("log", acc);
+      console.log(acc);
+      manager.output(form("stream", "out", acc));
       acc = "";
     } else acc += String.fromCharCode(charCode);
   };
 
-  const batched = (output: string) => manager.log("error", output);
+  const batched = (output: string) => {
+    console.error(output);
+    manager.output(form("stream", "err", output));
+  };
 
   return { stdin: { stdin }, stdout: { raw }, stderr: { batched } };
 };
 
 export class PyodideInstance {
   readonly globalThisId: string;
-  readonly drawCanvasId: string;
   readonly interruptBuffer: Uint8Array<ArrayBufferLike>;
 
   proxiedGlobalThis: undefined | any;
-  proxiedDrawCanvas: (pixels: number[], width: number, height: number) => void =
-    () => {};
   pyodide: PyodideAPI | undefined = undefined;
 
   constructor(options: {
     globalThisId: string;
-    drawCanvasId: string;
     interruptBuffer: Uint8Array<ArrayBufferLike>;
   }) {
     this.globalThisId = options.globalThisId;
-    this.drawCanvasId = options.drawCanvasId;
     this.interruptBuffer = options.interruptBuffer;
   }
 
   async init(manager: Kernel, root: string): Promise<any> {
     this.proxiedGlobalThis = this.proxyGlobalThis(manager, this.globalThisId);
-
-    this.proxiedDrawCanvas = manager.proxy.getObjectProxy(this.drawCanvasId);
-    (globalThis as any).drawPyodideCanvas = (
-      pixels: number[],
-      width: number,
-      height: number,
-    ) => {
-      if ((pixels as any).toJs) pixels = (pixels as any).toJs();
-      if (pixels instanceof Uint8ClampedArray || pixels instanceof Uint8Array)
-        pixels = Array.from(pixels);
-      this.proxiedDrawCanvas.apply({}, [pixels, width, height]);
-    };
 
     const indexURL = `https://cdn.jsdelivr.net/pyodide/v${version}/full/`;
 
@@ -156,61 +139,50 @@ export class PyodideInstance {
   async runCode(
     code: string,
     filename: string,
-  ): Promise<RunCodeResult | undefined> {
-    if (!this.pyodide) {
-      console.warn("Worker has not yet been initialized");
-      return;
-    }
+  ): Promise<Output.Specific | undefined | void> {
+    if (!this.pyodide)
+      return console.warn("Worker has not yet been initialized");
 
-    let result = await this.pyodide
+    let returns = await this.pyodide
       .runPythonAsync(code, { filename })
       .catch((error) => error);
 
-    let displayType: RunCodeResult["display"];
-
-    if (result instanceof this.pyodide.ffi.PyProxy) {
-      if (result._repr_html_ !== undefined) {
-        result = result._repr_html_();
-        displayType = "html";
-      } else if (result._repr_latex_ !== undefined) {
-        result = result._repr_latex_();
-        displayType = "latex";
-      } else {
-        result = result.__str__();
-        displayType = "default";
-      }
-    } else if (result instanceof this.pyodide.ffi.PythonError)
-      result = result + "";
-
-    this.destroyToJsResult(result);
-
-    return {
-      display: displayType,
-      value: result,
-    };
-  }
-
-  createStdin(manager: Kernel, getLastLine: () => string) {
-    const encoder = new TextEncoder();
-    let input = new Uint8Array();
-    let inputIndex = -1; // -1 means that we just returned null
-    function stdin() {
-      if (inputIndex === -1) {
-        const text = manager.input(getLastLine());
-        input = encoder.encode(text + (text.endsWith("\n") ? "" : "\n"));
-        inputIndex = 0;
-      }
-
-      if (inputIndex < input.length) {
-        let character = input[inputIndex];
-        inputIndex++;
-        return character;
-      } else {
-        inputIndex = -1;
-        return null;
-      }
+    if (returns === undefined || returns === null) return;
+    else if (returns instanceof this.pyodide.ffi.PyProxy) {
+      if (returns._repr_html_ !== undefined)
+        return form(
+          "execute_result",
+          "html",
+          this.destroyToJsResult(returns)._repr_html_(),
+        );
+      else if (returns._repr_latex_ !== undefined)
+        return form(
+          "execute_result",
+          "latex",
+          this.destroyToJsResult(returns)._repr_latex_(),
+        );
+      else if (image(returns)) return form("display_data", "image", returns);
+      else
+        return form(
+          "execute_result",
+          "plain",
+          this.destroyToJsResult(returns).__str__(),
+        );
+    } else if (returns instanceof this.pyodide.ffi.PythonError) {
+      const { message, type } = returns;
+      const ename = type;
+      const evalue = message.split(`${type}: `)[1].trim();
+      const lines = message.split("\n");
+      const firstFileLine = lines.findIndex((line) => line.includes(filename))!;
+      const traceback = lines.slice(firstFileLine);
+      traceback.splice(0, 0, lines[0]); // Add the error type/message at the start
+      return form("error", { ename, evalue, traceback });
+    } else {
+      console.error("Unexpected return type from Pyodide:", returns);
+      throw new Error(
+        `Unexpected return type from Pyodide (${typeof returns}): ${returns}`,
+      );
     }
-    return stdin;
   }
 
   private proxyGlobalThis(manager: Kernel, id?: string) {
@@ -259,10 +231,8 @@ export class PyodideInstance {
       "includes",
       "next",
       Symbol.iterator,
-
-      // Draw something to a canvas
-      "drawPyodideCanvas",
     ]);
+
     return manager.proxy && id
       ? manager.proxy.wrapExcluderProxy(
           manager.proxy.getObjectProxy(id),
@@ -272,8 +242,9 @@ export class PyodideInstance {
       : globalThis;
   }
 
-  private destroyToJsResult(x: any) {
-    if (!this.pyodide || !x) return;
+  private destroyToJsResult<T>(x: T): T {
+    if (!this.pyodide || !x) return x;
     if (x instanceof this.pyodide.ffi.PyProxy) x.destroy();
+    return x;
   }
 }

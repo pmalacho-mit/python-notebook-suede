@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/pmalacho-mit/python-ydoc-suede
+	branch = release
+	commit = b1a731e9057e5f8ce7b22048d61a032be367edd9
+	parent = 85385bf23579f58d62d0b3e4978e8cd48290a5e8
+	method = merge
+	cmdver = 0.4.9

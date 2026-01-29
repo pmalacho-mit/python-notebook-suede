@@ -52,6 +52,7 @@
 <script lang="ts">
   import { resolve } from "$app/paths";
   import Notebook, { Model } from "../../release/Notebook.svelte";
+  import * as Y from "yjs";
   let selection = $state<"part1" | "part2" | "homework1">();
 </script>
 
@@ -72,12 +73,15 @@
   >
     {#if selection}
       {#await fetch(resolve(`./${selection}.ipynb` as any)) then response}
-        {#await response.text() then ipynbText}
+        {#await response.json() then ipynbText}
           <Notebook
-            model={new Model({
-              cells: parseIpynb(ipynbText),
-              realpath: `${selection}.ipynb`,
-            })}
+            model={Model.FromSerialized(
+              {
+                ydoc: new Y.Doc(),
+                file: { name: "example.ipynb", path: "example.ipynb" },
+              },
+              ipynbText,
+            )}
           />
         {:catch error}
           <p style="color: red;">
