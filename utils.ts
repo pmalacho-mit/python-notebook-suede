@@ -1,3 +1,11 @@
+export type Expand<T> = T extends infer O ? { [K in keyof O]: O[K] } : never;
+
+export type ExpandRecursively<T> = T extends object
+  ? T extends infer O
+    ? { [K in keyof O]: ExpandRecursively<O[K]> }
+    : never
+  : T;
+
 export type Typed<T extends Record<string, any>> = {
   [K in keyof T]: { type: K } & T[K];
 }[keyof T];
@@ -47,3 +55,6 @@ export function flatPromise<T = any, E = any>(
 
   return { promise, resolve, reject };
 }
+
+export type Callback<T extends any[] = []> = (...args: T) => any;
+export type Maybe<T> = T | undefined | null;

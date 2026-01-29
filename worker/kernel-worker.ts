@@ -7,6 +7,7 @@ import {
 } from "./object-proxy";
 import { PyodideInstance } from "./pyodide-instance";
 import type { Typed } from "../utils";
+import { form, type Output } from "../output";
 
 export namespace Kernel {
   export type Requests = {
@@ -20,7 +21,6 @@ export namespace Kernel {
         filesystem: string;
         getInput: string;
         globalThis: string;
-        drawCanvas: string;
       };
       /**
        * The workspace root path for this kernel
@@ -30,7 +30,6 @@ export namespace Kernel {
       root: string;
     };
     run: {
-      id: string;
       code: string;
       /**
        * The filename to associate with this code execution
@@ -48,21 +47,9 @@ export namespace Kernel {
     kernel_initialized: {
       kernelId: string;
     };
-    loaded: {
-      id: string;
-    };
-    result: {
-      id: string;
-      value: any;
-    };
-    console: {
-      method: "log" | "warn" | "error";
-      data: string[];
-    };
-    error: {
-      id: string;
-      error: string;
-    };
+    loaded: {};
+    output: Output.Specific;
+    finished: {};
   } & ProxyMessages;
 
   export type Request<T extends keyof Requests = keyof Requests> =
@@ -103,21 +90,28 @@ const handler = {
     manager.syncFs = syncFs;
     manager.pyodide = new PyodideInstance({
       globalThisId: data.ids.globalThis,
-      drawCanvasId: data.ids.drawCanvas,
       interruptBuffer: asyncMemory.interrupter,
     });
 
     await manager.pyodide.init(manager, data.root);
     manager.postMessage({ type: "initialized" });
   },
-  onRun: async (manager, { id, code, file: filename }) => {
+  onRun: async (manager, { code, file: filename }) => {
     try {
       await manager.pyodide.load(code, filename);
-      manager.postMessage({ type: "loaded", id });
+      manager.postMessage({ type: "loaded" });
       const value = await manager.pyodide.runCode(code, filename);
-      manager.postMessage({ type: "result", id, value });
+      if (value) manager.output(value);
     } catch (e) {
-      manager.postMessage({ type: "error", id, error: e + "" });
+      manager.output(
+        form("error", {
+          ename: "ExecutionError",
+          evalue: (e as Error).message,
+          traceback: (e as Error).stack ? (e as Error).stack!.split("\n") : [],
+        }),
+      );
+    } finally {
+      manager.postMessage({ type: "finished" });
     }
   },
 } satisfies Kernel.RequestHandler;
@@ -145,19 +139,22 @@ export class Kernel {
   constructor() {
     const _handle = handle.bind(null, this);
     self.addEventListener("message", async (e: MessageEvent) => {
-      if (!e.data)
-        return console.warn("Kernel worker received unexpected message:", e);
-
-      _handle(e.data);
+      if (!e.data) console.warn("Unexpected kernel worker  message:", e);
+      else _handle(e.data);
     });
   }
 
-  postMessage(message: Kernel.Response) {
-    (self.postMessage as any)(message);
+  output(output: Output.Specific) {
+    const casted = output satisfies Omit<
+      Kernel.Response<"output">,
+      "type"
+    > as Kernel.Response<"output">;
+    casted.type = "output";
+    this.postMessage(casted);
   }
 
-  log(method: "log" | "warn" | "error", ...args: string[]) {
-    this.postMessage({ method, type: "console", data: args });
+  postMessage(message: Kernel.Response) {
+    self.postMessage(message);
   }
 
   [ObjectId] = "";

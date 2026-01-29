@@ -1,13 +1,44 @@
 <script lang="ts" module>
-  function normalizeMarkdown(text: string): string {
-    return text.replace(/^(#{1,6})([^\s#])/gm, "$1 $2");
-  }
+  import type { YMarkdownCell, CellChange } from "../python-yjs-suede";
+  import { marked } from "marked";
+
+  const normalizeMarkdown = (text: string) =>
+    text.replace(/^(#{1,6})([^\s#])/gm, "$1 $2");
+
+  export type Props = {
+    cell: YMarkdownCell;
+  };
+
+  const render = ({ source }: YMarkdownCell) =>
+    marked(normalizeMarkdown(source));
 </script>
 
 <script lang="ts">
-  import { marked } from "marked";
+  let { cell }: Props = $props();
 
-  let { content }: { content: string } = $props();
+  let html = $state<string>("");
+
+  /* svelte-ignore state_referenced_locally */
+  const initial = render(cell);
+
+  typeof initial === "string"
+    ? (html = initial)
+    : initial.then((value) => (html = value));
+
+  const set = (_: YMarkdownCell, { sourceChange }: CellChange) => {
+    if (sourceChange && sourceChange.length > 0) {
+      const result = render(cell);
+      typeof result === "string"
+        ? (html = result)
+        : result.then((value) => (html = value));
+    }
+  };
+
+  $effect(() => {
+    const { changed } = cell;
+    changed.connect(set);
+    return () => changed.disconnect(set);
+  });
 </script>
 
 <div class="cell">
@@ -15,7 +46,7 @@
     <div class="cell-body">
       <div class="cell-toolbar">Markdown</div>
       <div class="editor">
-        {@html marked(normalizeMarkdown(content))}
+        {@html html}
       </div>
     </div>
   </div>

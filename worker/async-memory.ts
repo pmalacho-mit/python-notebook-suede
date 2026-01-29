@@ -191,4 +191,9 @@ export class AsyncMemory {
   clearInterrupt() {
     this.interrupter[0] = 0;
   }
+
+  dispose() {
+    this.forceUnlockSize();
+    this.unlockWorker();
+  }
 }

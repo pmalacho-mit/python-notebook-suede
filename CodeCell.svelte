@@ -1,63 +1,140 @@
 <script lang="ts" module>
-  import { mixin } from "../mixin-suede";
-  export class Model extends Editor.Model {}
+  import type { Text } from "yjs";
+
+  class File implements Editor.Model {
+    index = $state<number>(0);
+    notebook = $state<Notebook>();
+    sourceSync = $state<Text>();
+
+    removeSuffixExtension(line: string) {
+      const { path } = this;
+      return line.replace(path, path.replace(".py", ""));
+    }
+
+    private suffix(content: string) {
+      return `${content}(${this.index}).py`;
+    }
+
+    get name() {
+      return this.suffix(this.notebook?.name ?? "");
+    }
+
+    get path() {
+      return this.suffix(this.notebook?.path ?? "");
+    }
+
+    get readonly() {
+      return this.notebook?.file.readonly ?? false;
+    }
+
+    get source() {
+      return this.sourceSync?.toString() ?? "";
+    }
+
+    set name(_) {}
+    set path(_) {}
+    set source(_) {}
+    set readonly(_) {}
+  }
+
+  // Just putting HTML with script tags on the DOM will not get them evaluated
+  // Using this hack we execute them anyway
+  const evalScriptTagsHack = (element: Element) =>
+    element
+      .querySelectorAll('script[type|="text/javascript"]')
+      .forEach(function (e) {
+        if (e.textContent !== null) eval(e.textContent);
+      });
+
+  type Status = "initial" | "queued" | "running" | "completed";
+
+  const trap = (event: Event) => event.stopPropagation();
+
+  const trySanitizeError = (output: Output.Specific, file: File) => {
+    if (!is(output, "error")) return output;
+    const { traceback } = output;
+    for (let i = 0; i < traceback.length; i++)
+      traceback[i] = file.removeSuffixExtension(traceback[i]);
+    return output;
+  };
+
+  export type Props = {
+    cell: YCodeCell;
+    proxy: CellProxy;
+    notebook: Notebook;
+    getRunID: () => number;
+    selected: boolean;
+    reveal: () => void;
+    index: number;
+  };
 </script>
 
 <script lang="ts">
-  import type { default as PythonKernel, Run } from "./PythonKernel";
+  import { YCodeCell, type CellChange } from "../python-yjs-suede";
+  import type { Run } from "./PythonKernel";
   import { Editor } from "../python-monaco-suede";
   import * as monaco from "monaco-editor/esm/vs/editor/editor.api";
   import {
     enableMonacoAutoHeight,
     installNotebookCellKeybindings,
   } from "./monaco";
-  import type { CellEvents } from "./Notebook.svelte";
+  import type { CellProxy, Model as Notebook } from "./Notebook.svelte";
+  import { accessor, is, type Output } from "./output";
+  import type { MouseEventHandler } from "svelte/elements";
 
-  let {
-    kernel,
-    model,
-    getRunID,
-    selected,
-    reveal,
-  }: {
-    kernel: PythonKernel;
-    model: Model;
-    getRunID: () => number;
-    selected: boolean;
-    reveal: () => void;
-  } = $props();
+  let { cell, proxy, notebook, getRunID, selected, reveal, index }: Props =
+    $props();
 
   let runID = $state<number>();
-  let status = $state<"initial" | "queued" | "running" | "completed">(
-    "initial",
-  );
+  let status = $state<Status>("initial");
 
-  type OutputStatus = "ok" | "error";
+  let outputs = $state.raw<Output.Any[]>();
 
-  let outputs = $state<{ values: any[]; status: OutputStatus }[]>();
+  const increment = () => (runID = getRunID());
 
-  let outputElement = $state<HTMLElement>();
-  let container = $state<HTMLElement>();
+  const file = new File();
+
+  $effect(() => {
+    file.index = index;
+  });
+
+  $effect(() => {
+    file.notebook = notebook;
+  });
+
+  $effect(() => {
+    file.sourceSync = cell.ysource;
+  });
+
+  const onChange = (cell: YCodeCell, { outputsChange }: CellChange) => {
+    if (outputsChange && outputsChange.length > 0) {
+      increment();
+      outputs = cell.getOutputs();
+      for (const output of outputs) {
+        if (is(output, "error")) return select();
+        if (is(output, "stream") && output.name === "stderr") return select();
+      }
+    }
+  };
+
+  $effect(() => {
+    const { changed } = cell;
+    changed.connect(onChange);
+    return () => changed.disconnect(onChange);
+  });
 
   let editor = $state<monaco.editor.IStandaloneCodeEditor>();
+  let editorContainer = $state<HTMLElement>();
 
   const preRun = () => {
-    runID = getRunID();
-    outputElement?.childNodes.forEach((child) => child.remove());
+    runID = undefined;
     outputs = undefined;
+    cell.clearOutputs();
     status = "queued";
   };
 
-  const output = (status: OutputStatus, value: any) => {
-    if (outputs && outputs.length > 0) {
-      const last = outputs[outputs.length - 1];
-      if (last.status === status) return last.values.push(value);
-    }
-
-    (outputs ??= []).push({ status, values: [value] });
-  };
-
   const focus = (target: "start" | "end" = "start") => {
+    if (!editor) console.log("no editor", file.path);
     editor?.focus();
     reveal();
 
@@ -79,37 +156,29 @@
   };
 
   const select = () => {
-    if (selected) return;
-    (model as any as { events: CellEvents }).events.fire("request select");
+    if (!selected) proxy.fire("request select");
   };
 
   const on = {
     start: () => (status = "running"),
-    complete: () => (status = "completed"),
-    output: {
-      html: (element: HTMLElement) => outputElement!.appendChild(element),
-      raw: (data: any) => output("ok", data),
+    complete: (outputs: Output.Specific[]) => {
+      status = "completed";
+      if (outputs.length === 0) increment();
     },
-    error: (msg: string) => {
-      output("error", msg);
-      focus();
+    output: (entry: Output.Specific) => {
+      const { length } = cell.outputs;
+      trySanitizeError(entry, file);
+      cell.updateOutputs(length, length, [entry]);
     },
-    console: (level: "log" | "warn" | "error", msg: string) =>
-      level === "log" ? on.output.raw(msg) : on.error(msg),
   } as const;
 
   let task: Run.Job | undefined = undefined;
 
   const run = () => {
     preRun();
-    const { content: code, path } = model;
-    task = kernel.run({ code, path });
-    task.on("start", on.start);
-    task.on("complete", on.complete);
-    task.on("output", "html", on.output.html);
-    task.on("output", "raw", on.output.raw);
-    task.on("error", on.error);
-    task.on("console", on.console);
+    const { source: code } = cell;
+    const { path } = file;
+    task = notebook.kernel.run({ code, on, path });
   };
 
   const interrupt = () => {
@@ -123,20 +192,9 @@
     if (selected) focus();
   });
 
-  const focusNext = () =>
-    (model as any as { events: CellEvents }).events.fire(
-      "request select next",
-      "code",
-    );
-
-  const focusPrevious = () =>
-    (model as any as { events: CellEvents }).events.fire(
-      "request select previous",
-      "code",
-    );
-
+  const focusNext = () => proxy.fire("request select next", "code");
+  const focusPrevious = () => proxy.fire("request select previous", "code");
   const runAndFocusNext = () => (run(), focusNext());
-
   const controls = { run, runAndFocusNext, focusNext, focusPrevious };
 
   const onEditor = (
@@ -149,11 +207,29 @@
       installNotebookCellKeybindings(editor, controls),
     ];
 
-    if (container)
-      disposables.push(enableMonacoAutoHeight({ editor, container }));
+    if (editorContainer)
+      disposables.push(
+        enableMonacoAutoHeight({ editor, container: editorContainer }),
+      );
 
     const dispose = () => disposables.forEach(({ dispose }) => dispose());
     return { dispose };
+  };
+
+  const onclick = $derived(inflight ? interrupt : run);
+
+  const selectOnKey = (event: KeyboardEvent) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    if (editor?.hasTextFocus()) return;
+    event.preventDefault();
+    select();
+  };
+
+  const selectOnClick: MouseEventHandler<Element> = ({ y, currentTarget }) => {
+    if (editor?.hasTextFocus()) return;
+    const rect = currentTarget.getBoundingClientRect();
+    const midpoint = rect.top + rect.height / 2;
+    focus(y < midpoint ? "start" : "end");
   };
 </script>
 
@@ -161,27 +237,11 @@
   <div class="cell-row">
     <div class="cell-gutter">
       <div class="exec">In [{runID ?? ""}]</div>
-      <div
-        style:display="flex"
-        style:flex-direction="column"
-        style:justify-content="center"
-        style:align-items="center"
-      >
-        <div style="position: relative">
-          <span
-            class="loader {status}"
-            style:position="absolute"
-            style:top="-2px"
-            style:left="-18px"
-          ></span>
+      <div class="run-container">
+        <div class="loader-container">
+          <span class="loader {status}"></span>
         </div>
-
-        <button
-          class="run-btn"
-          aria-label="run"
-          onclick={inflight ? interrupt : run}
-        >
-        </button>
+        <button class="run-btn" aria-label="run" {onclick}></button>
         {#if inflight}<em>{status}</em>{/if}
       </div>
     </div>
@@ -189,45 +249,108 @@
       class="cell-body"
       role="button"
       tabindex={1}
-      onkeypress={(event) => {
-        if (event.key !== "Enter" && event.key !== " ") return;
-        if (editor?.hasTextFocus()) return;
-        event.preventDefault();
-        select();
-      }}
-      onclick={({ target, y, currentTarget }) => {
-        if (editor?.hasTextFocus()) return;
-        const rect = currentTarget.getBoundingClientRect();
-        const midpoint = rect.top + rect.height / 2;
-        console.log({ y, midpoint });
-        focus(y < midpoint ? "start" : "end");
-      }}
+      onkeypress={selectOnKey}
+      onclick={selectOnClick}
     >
       <div class="cell-toolbar">Code</div>
       <div
+        bind:this={editorContainer}
         class="editor"
-        bind:this={container}
-        onclick={(e) => e.stopPropagation()}
-        onkeydown={(e) => e.stopPropagation()}
         role="button"
         tabindex={1}
+        onclick={trap}
+        onkeydown={trap}
       >
-        <Editor.Component file={model} {onEditor} />
+        <Editor.Component {file} {onEditor} />
       </div>
       <div class="output">
-        {#each outputs as { status, values }}
-          <div class="output-box {status}">
-            {#each values as value}
-              <div style:white-space="pre-line">
-                {value}
-              </div>
-            {/each}
+        {#each outputs as output}
+          {@const specific = output as Output.Specific}
+          {@const error =
+            specific.output_type === "error" ||
+            (specific.output_type === "stream" && specific.name === "stderr")}
+          {@const ok = !error}
+          <div class="output-box" class:error class:ok>
+            {#if specific.output_type === "stream"}
+              {@render stream(specific)}
+            {:else if specific.output_type === "display_data"}
+              {@render displayData(specific)}
+            {:else if specific.output_type === "execute_result"}
+              {@render executeResult(specific)}
+            {:else if specific.output_type === "error"}
+              {@render errorResult(specific)}
+            {:else}
+              {@render unrecognized("output_type", output.output_type)}
+            {/if}
           </div>
         {/each}
       </div>
     </div>
   </div>
 </div>
+
+{#snippet unrecognized(identifier: string | Output.Any, detail: string)}
+  <div>
+    Unrecognized {typeof identifier === "string"
+      ? identifier
+      : identifier.output_type} ({detail}). Please contact the Pytutor
+    maintainers and/or your professor.
+  </div>
+{/snippet}
+
+{#snippet stream(output: Output.Stream)}
+  {@const access = accessor(output)}
+  {@const text = access.stdout ?? access.stderr}
+
+  {#if Array.isArray(text)}
+    {#each text as line}
+      {@render row(line)}
+    {/each}
+  {:else if typeof text === "string"}
+    {@render row(text)}
+  {:else}
+    {@render unrecognized("stream", JSON.stringify(typeof text))}
+  {/if}
+
+  {#snippet row(line: string)}
+    <div style:white-space="pre-line">
+      {line}
+    </div>
+  {/snippet}
+{/snippet}
+
+{#snippet displayData(output: Output.DisplayData)}
+  {@const access = accessor(output)}
+  {#if access.image}
+    <img src={access.image} alt="display output" />
+  {:else}
+    {@render unrecognized(output, JSON.stringify(Object.keys(output.data)))}
+  {/if}
+{/snippet}
+
+{#snippet executeResult(output: Output.ExecuteResult)}
+  {@const access = accessor(output)}
+  {#if access.html}
+    <div {@attach evalScriptTagsHack}>
+      {@html access.html}
+    </div>
+  {:else if access.plain}
+    <div style:white-space="pre-line">
+      {access.plain}
+    </div>
+  {:else}
+    {@render unrecognized(output, JSON.stringify(Object.keys(output.data)))}
+  {/if}
+{/snippet}
+
+{#snippet errorResult(output: Output.Error)}
+  <strong>{output.ename}: {output.evalue}</strong>
+  <pre>
+    {#each output.traceback as line}
+      {line}
+    {/each}
+  </pre>
+{/snippet}
 
 <style>
   /* ========== Cells ========== */
@@ -259,7 +382,7 @@
   }
 
   .cell-gutter {
-    width: 68px;
+    width: 72px;
     background: #f9fafb;
     border-right: 1px solid #e5e7eb;
     padding: 0.75rem 0.5rem;
@@ -276,6 +399,15 @@
     border: 1px solid #e5e7eb;
     color: #374151;
     margin-bottom: 0.5rem;
+  }
+
+  .run-container {
+    display: "flex";
+    position: relative;
+    flex-direction: "column";
+    justify-content: "center";
+    align-items: "center";
+    width: 100%;
   }
 
   .run-btn {
@@ -337,6 +469,15 @@
   .output-box.error {
     border-left-color: #fecaca;
     color: #991b1b;
+  }
+
+  .loader-container {
+    position: absolute;
+    top: 0;
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
   }
 
   .loader {
