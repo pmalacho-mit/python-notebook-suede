@@ -58,3 +58,9 @@ export function flatPromise<T = any, E = any>(
 
 export type Callback<T extends any[] = []> = (...args: T) => any;
 export type Maybe<T> = T | undefined | null;
+
+export const join = (...parts: (string | undefined | null)[]): string =>
+  parts
+    .filter((part) => part !== undefined && part !== null)
+    .map((part) => part!.replace(/(^\/+|\/+$)/g, ""))
+    .join("/");
