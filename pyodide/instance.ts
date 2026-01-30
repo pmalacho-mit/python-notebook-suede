@@ -55,12 +55,9 @@ const io = (
 
 export class PyodideInstance {
   readonly globalThisId: string;
-  //readonly drawCanvasId: string;
   readonly interruptBuffer: Uint8Array<ArrayBufferLike>;
 
   proxiedGlobalThis: undefined | any;
-  proxiedDrawCanvas: (pixels: number[], width: number, height: number) => void =
-    () => {};
 
   pyodide: PyodideAPI | undefined = undefined;
 
@@ -69,13 +66,11 @@ export class PyodideInstance {
     interruptBuffer: Uint8Array<ArrayBufferLike>;
   }) {
     this.globalThisId = options.globalThisId;
-    //this.drawCanvasId = options.drawCanvasId;
     this.interruptBuffer = options.interruptBuffer;
   }
 
   async init(manager: Kernel, root: string): Promise<any> {
-    //this.proxiedGlobalThis = this.proxyGlobalThis(manager, this.globalThisId);
-    //this.proxiedDrawCanvas = manager.proxy.getObjectProxy(this.drawCanvasId);
+    this.proxiedGlobalThis = this.proxyGlobalThis(manager, this.globalThisId);
 
     const indexURL = `https://cdn.jsdelivr.net/pyodide/v${version}/full/`;
 
@@ -90,21 +85,21 @@ export class PyodideInstance {
     this.pyodide.setStdout(stdout);
     this.pyodide.setStderr(stderr);
 
-    await patchMatplotlib(this.pyodide!);
+    await patchMatplotlib(this.pyodide);
 
     this.pyodide.setInterruptBuffer(this.interruptBuffer);
 
     try {
-      this.pyodide.FS.mkdir("/home/pytutor");
-      this.pyodide.FS.mkdirTree("/home/pytutor");
+      this.pyodide.FS.mkdirTree(root);
     } catch (e) {
-      console.error("Error creating home directory in FS", e, root);
+      console.error("Error creating mount directory in FS", e, root);
     }
+
     this.pyodide.FS.mount(new EMFS(this.pyodide, manager.syncFs), {}, root);
-    //this.pyodide.registerJsModule("js", this.proxiedGlobalThis);
+    this.pyodide.registerJsModule("js", this.proxiedGlobalThis);
   }
 
-  async load(code: string, filename: string): Promise<void> {
+  async load(code: string): Promise<void> {
     if (!this.pyodide) {
       console.warn("Worker has not yet been initialized");
       return;
