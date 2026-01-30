@@ -80,7 +80,6 @@
     }
 
     onChange(_: YNotebook, change: NotebookChange) {
-      console.log("Notebook change:", change);
       const { cellProxies: cellIDs } = this;
       let cellIndex = 0;
       change?.cellsChange?.forEach(({ retain, delete: _delete, insert }) => {
@@ -106,7 +105,6 @@
       serialized: Parameters<YNotebook["fromJSON"]>[0],
     ) {
       const notebook = new Model(construct);
-      console.log(notebook.ydoc);
       notebook.fromJSON(serialized);
       return notebook;
     }

@@ -150,7 +150,6 @@ export class Kernel {
       "type"
     > as Kernel.Response<"output">;
     casted.type = "output";
-    console.log(output);
     this.postMessage(casted);
   }
 
