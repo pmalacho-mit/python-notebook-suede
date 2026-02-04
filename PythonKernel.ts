@@ -28,7 +28,7 @@ export namespace Run {
 
   export type Job = Expand<{
     interrupt: () => void;
-    result: Promise<any>;
+    result: Promise<Output.Specific[]>;
   }>;
 }
 
