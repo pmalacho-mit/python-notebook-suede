@@ -247,4 +247,6 @@ export default class PythonKernel {
       },
     },
   });
+
+  static Default = () => new PythonKernel(PythonKernel.DefaultEnvironment());
 }

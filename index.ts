@@ -1,7 +1,5 @@
-import {
-  default as NotebookComponent,
-  Model as NotebookModel,
-} from "./Notebook.svelte";
+import NotebookComponent from "./Notebook.svelte";
+import { Notebook as NotebookModel } from "./models.svelte";
 
 export { default as PythonKernel, type Environment } from "./PythonKernel";
 

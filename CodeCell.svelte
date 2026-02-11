@@ -80,7 +80,7 @@
     enableMonacoAutoHeight,
     installNotebookCellKeybindings,
   } from "./monaco";
-  import type { CellProxy, Model as Notebook } from "./Notebook.svelte";
+  import type { CellProxy, Notebook } from "./models.svelte";
   import { accessor, is, type Output } from "./output";
 
   let {
@@ -225,6 +225,9 @@
 
     const disposables = [
       editor.onDidFocusEditorText(select),
+      editor.onKeyDown((event) => {
+        proxy.fire("keydown", event.browserEvent);
+      }),
       installNotebookCellKeybindings(editor, controls),
     ];
 
