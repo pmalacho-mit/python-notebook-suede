@@ -151,6 +151,7 @@ export function form(
     case "display_data":
       // only image supported for now
       const { width, height, base64 } = third as Payload;
+      console.log("form display_data", base64);
       return {
         output_type: "display_data",
         metadata: { width, height },

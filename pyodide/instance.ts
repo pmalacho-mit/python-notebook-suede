@@ -90,8 +90,6 @@ export class PyodideInstance {
     this.pyodide.setStdout(stdout);
     this.pyodide.setStderr(stderr);
 
-    await patchMatplotlib(this.pyodide!);
-
     this.pyodide.setInterruptBuffer(this.interruptBuffer);
 
     try {

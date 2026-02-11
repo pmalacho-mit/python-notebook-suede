@@ -1,5 +1,3 @@
-import type { PyodideAPI } from "pyodide";
-
 export type Payload = {
   base64: string;
   width: number;
@@ -17,29 +15,34 @@ export const is = (query: any): query is Payload =>
  * Matplotlib currently creates a dom element which never gets attached to the DOM.
  * Without a way to specify our own DOM node creation function, we override it here - saving us from shipping our own matplotlib package.
  */
-export async function patchMatplotlib(pyodide: PyodideAPI) {
+export function patchMatplotlib(module: { runPython: (code: string) => any }) {
   // Switch to simpler matplotlib backend https://github.com/jupyterlite/jupyterlite/blob/main/packages/pyolite-kernel/py/pyolite/pyolite/patches.py
 
-  await pyodide.loadPackage("ipython");
-  await pyodide.loadPackage("matplotlib_inline");
-  await pyodide.loadPackage("matplotlib");
-
-  await pyodide.runPythonAsync(`
+  module.runPython(`
+import js
 import matplotlib
-matplotlib.use('module://matplotlib_inline.backend_inline')
 import matplotlib.pyplot
-
 import base64
 import io
 
+class Dud:
+
+    def __init__(self, *args, **kwargs) -> None:
+        return
+
+    def __getattr__(self, __name: str):
+        return Dud
+
 def show():
-  fig = matplotlib.pyplot.gcf()
+  js.document = Dud()
+  canvas = matplotlib.pyplot.gcf().canvas
+  canvas.draw()
   buf = io.BytesIO()
-  fig.savefig(buf, format='png')
-  png_data = base64.b64encode(buf.getvalue()).decode('utf-8')
-  result = { '${"base64" satisfies keyof Payload}': png_data, '${"width" satisfies keyof Payload}': fig.get_size_inches()[0] * fig.dpi, '${"height" satisfies keyof Payload}': fig.get_size_inches()[1] * fig.dpi }
-  matplotlib.pyplot.close(fig)
-  return result
+  canvas.print_png(buf)
+  buf.seek(0)
+  encoded = base64.b64encode(buf.read()).decode('ascii')
+  width, height = canvas.get_width_height()
+  return { '${"base64" satisfies keyof Payload}': encoded, '${"width" satisfies keyof Payload}': int(width), '${"height" satisfies keyof Payload}': int(height) }
 
 matplotlib.pyplot.show = show
 `);
