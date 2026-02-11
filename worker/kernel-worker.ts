@@ -98,7 +98,7 @@ const handler = {
   },
   onRun: async (manager, { code, file: filename }) => {
     try {
-      await manager.pyodide.load(code);
+      await manager.pyodide.load(code, filename);
       manager.postMessage({ type: "loaded" });
       const value = await manager.pyodide.runCode(code, filename);
       if (value) manager.output(value);
