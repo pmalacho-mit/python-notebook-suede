@@ -103,7 +103,7 @@
   const increment = () => {
     runID = getRunID();
     cell.execution_count = runID;
-    return runID;
+    proxy.fire("cell executed", outputs ?? [], runID);
   };
 
   const file = new File();
@@ -122,7 +122,8 @@
 
   const onChange = (cell: YCodeCell, { outputsChange }: CellChange) => {
     if (outputsChange && outputsChange.length > 0) {
-      outputs = cell.outputs;
+      increment();
+      outputs = cell.getOutputs();
       for (const output of outputs) {
         if (is(output, "error")) return select();
         if (is(output, "stream") && output.name === "stderr") return select();
@@ -184,7 +185,7 @@
     start: () => (status = "running"),
     complete: (outputs: Output.Specific[]) => {
       status = "completed";
-      proxy.fire("cell executed", outputs, increment());
+      if (outputs.length === 0) increment();
     },
     output: (entry: Output.Specific) => {
       const { length } = cell.outputs;
