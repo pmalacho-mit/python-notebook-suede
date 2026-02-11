@@ -82,6 +82,7 @@
   } from "./monaco";
   import type { CellProxy, Model as Notebook } from "./Notebook.svelte";
   import { accessor, is, type Output } from "./output";
+  import type { MouseEventHandler } from "svelte/elements";
 
   let {
     cell,
@@ -100,11 +101,7 @@
 
   let outputs = $state.raw<Output.Any[]>();
 
-  const increment = () => {
-    runID = getRunID();
-    cell.execution_count = runID;
-    proxy.fire("cell executed", outputs ?? [], runID);
-  };
+  const increment = () => (runID = getRunID());
 
   const file = new File();
 
@@ -471,7 +468,6 @@
 
   .cell-body {
     flex: 1;
-    width: 100%;
   }
 
   .cell-toolbar {
@@ -507,6 +503,7 @@
     width: 100%;
     border-top: 1px solid #e5e7eb;
     padding: 1rem;
+    overflow-x: scroll;
   }
 
   .output-box {
@@ -514,7 +511,6 @@
     padding: 0.75rem;
     border-radius: 8px;
     background: #ffffff;
-    overflow-x: scroll;
   }
 
   .output-box.ok {

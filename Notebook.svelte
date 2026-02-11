@@ -8,7 +8,6 @@
     type ISharedCell,
     type YCellType,
   } from "../python-yjs-suede";
-  import { type Output } from "./output";
 
   type SupportedCellType = (YCodeCell | YMarkdownCell)["cell_type"];
 
@@ -18,15 +17,6 @@
     "request select next": [type: SupportedCellType | "any"];
     "request select previous": [type: SupportedCellType | "any"];
     run: [];
-    "cell executed": [outputs: Output.Any[], execution_count: number];
-  };
-
-  export type INotebookEvents = {
-    "cell executed": [
-      cellIndex: number,
-      outputs: Output.Any[],
-      execution_count: number,
-    ];
   };
 
   const isSupportedCell = (
@@ -48,8 +38,6 @@
 
   export class Model extends YNotebook {
     readonly kernel: PythonKernel;
-    readonly events = new WithEvents<INotebookEvents>();
-
     runID = $state<number>(0);
     cellProxies = $state<CellProxy[]>([]);
 
@@ -89,12 +77,6 @@
           throw new Error(`Unsupported cell type: ${cell.cell_type}`);
         return new CellProxy(cell.id, cell.cell_type);
       });
-
-      this.runID = Math.max(
-        ...this.cells.map((c) =>
-          c.cell_type === "code" ? (c.execution_count ?? 0) : 0,
-        ),
-      );
     }
 
     onChange(_: YNotebook, change: NotebookChange) {
@@ -192,13 +174,6 @@
       if (proxy.type === "code") proxy.fire("run");
     }
   };
-
-  $effect(() =>
-    WithEvents.Collect(model.cellProxies).subscribe({
-      "cell executed": (outputs, runID, _, index) =>
-        model.events.fire("cell executed", index, outputs, runID),
-    }),
-  );
 </script>
 
 <div style:height="100%" style:width="100%" style:overflow="hidden">
