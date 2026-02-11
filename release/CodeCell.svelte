@@ -66,6 +66,8 @@
     selected: boolean;
     reveal: () => void;
     index: number;
+    runAbove: () => void;
+    runBelow: () => void;
   };
 </script>
 
@@ -78,19 +80,31 @@
     enableMonacoAutoHeight,
     installNotebookCellKeybindings,
   } from "./monaco";
-  import type { CellProxy, Model as Notebook } from "./Notebook.svelte";
+  import type { CellProxy, Notebook } from "./models.svelte";
   import { accessor, is, type Output } from "./output";
-  import type { MouseEventHandler } from "svelte/elements";
 
-  let { cell, proxy, notebook, getRunID, selected, reveal, index }: Props =
-    $props();
+  let {
+    cell,
+    proxy,
+    notebook,
+    getRunID,
+    selected,
+    reveal,
+    index,
+    runAbove,
+    runBelow,
+  }: Props = $props();
 
   let runID = $state<number>();
   let status = $state<Status>("initial");
 
   let outputs = $state.raw<Output.Any[]>();
 
-  const increment = () => (runID = getRunID());
+  const increment = () => {
+    runID = getRunID();
+    cell.execution_count = runID;
+    return runID;
+  };
 
   const file = new File();
 
@@ -108,8 +122,7 @@
 
   const onChange = (cell: YCodeCell, { outputsChange }: CellChange) => {
     if (outputsChange && outputsChange.length > 0) {
-      increment();
-      outputs = cell.getOutputs();
+      outputs = cell.outputs;
       for (const output of outputs) {
         if (is(output, "error")) return select();
         if (is(output, "stream") && output.name === "stderr") return select();
@@ -133,9 +146,17 @@
     status = "queued";
   };
 
-  const focus = (target: "start" | "end" = "start") => {
-    if (!editor) console.log("no editor", file.path);
+  const focusHack = () => {
     editor?.focus();
+    editor?.trigger("keyboard", "type", { text: "" });
+    let diposable = editor?.onDidFocusEditorWidget(() => {
+      editor?.focus();
+      diposable?.dispose();
+    });
+  };
+
+  const focus = (target?: "start" | "end") => {
+    focusHack();
     reveal();
 
     switch (target) {
@@ -163,7 +184,7 @@
     start: () => (status = "running"),
     complete: (outputs: Output.Specific[]) => {
       status = "completed";
-      if (outputs.length === 0) increment();
+      proxy.fire("cell executed", outputs, increment());
     },
     output: (entry: Output.Specific) => {
       const { length } = cell.outputs;
@@ -204,6 +225,9 @@
 
     const disposables = [
       editor.onDidFocusEditorText(select),
+      editor.onKeyDown((event) => {
+        proxy.fire("keydown", event.browserEvent);
+      }),
       installNotebookCellKeybindings(editor, controls),
     ];
 
@@ -218,20 +242,18 @@
 
   const onclick = $derived(inflight ? interrupt : run);
 
-  const selectOnKey = (event: KeyboardEvent) => {
-    if (editor?.hasTextFocus()) return;
-    if (event.key !== "Enter" && event.key !== " ") return;
-    if (editor?.hasTextFocus()) return;
-    event.preventDefault();
-    select();
+  const tryFocus = (end: "start" | "end") => (selected ? select() : focus(end));
+
+  const tryFocusOnKey = (event: KeyboardEvent, end: "start" | "end") => {
+    if (event.key === "Enter" || event.key === " ")
+      selected ? select() : tryFocus(end);
   };
 
-  const selectOnClick: MouseEventHandler<Element> = ({ y, currentTarget }) => {
-    if (editor?.hasTextFocus()) return;
-    const rect = currentTarget.getBoundingClientRect();
-    const midpoint = rect.top + rect.height / 2;
-    focus(y < midpoint ? "start" : "end");
-  };
+  $effect(() =>
+    proxy.subscribe({
+      run: () => run(),
+    }),
+  );
 </script>
 
 <div class="cell" class:selected>
@@ -246,25 +268,43 @@
         {#if inflight}<em>{status}</em>{/if}
       </div>
     </div>
-    <div
-      class="cell-body"
-      role="button"
-      tabindex={1}
-      onkeypress={selectOnKey}
-      onclick={selectOnClick}
-    >
-      <div class="cell-toolbar">Code</div>
+    <div class="cell-body" role="button" tabindex={1}>
+      <div class="cell-toolbar">
+        <button
+          class="toolbar-label"
+          onkeypress={(event) => tryFocusOnKey(event, "start")}
+          onclick={() => tryFocus("start")}
+        >
+          Code
+        </button>
+        <div class="run-all-btns">
+          <button
+            class="run-all-btn"
+            aria-label="run all above"
+            onclick={runAbove}
+            title="Run all above">↑</button
+          >
+          <button
+            class="run-all-btn"
+            aria-label="run all below"
+            onclick={runBelow}
+            title="Run all below">↓</button
+          >
+        </div>
+      </div>
       <div
         bind:this={editorContainer}
         class="editor"
         role="button"
         tabindex={1}
-        onclick={trap}
-        onkeydown={trap}
       >
         <Editor.Component {file} {onEditor} />
       </div>
-      <div class="output">
+      <button
+        class="output"
+        onkeypress={(event) => tryFocusOnKey(event, "start")}
+        onclick={() => tryFocus("end")}
+      >
         {#each outputs as output}
           {@const specific = output as Output.Specific}
           {@const error =
@@ -285,7 +325,7 @@
             {/if}
           </div>
         {/each}
-      </div>
+      </button>
     </div>
   </div>
 </div>
@@ -433,15 +473,27 @@
 
   .cell-body {
     flex: 1;
+    width: 100%;
   }
 
   .cell-toolbar {
+    width: 100%;
     padding: 0.5rem 1rem;
     border-bottom: 1px solid #e5e7eb;
     font-size: 0.75rem;
     color: #6b7280;
     display: flex;
     justify-content: space-between;
+    align-items: center;
+  }
+
+  .toolbar-label {
+    background: none;
+    border: none;
+    padding: 0;
+    font-size: 0.75rem;
+    color: #6b7280;
+    cursor: pointer;
   }
 
   .editor {
@@ -452,6 +504,9 @@
 
   /* ========== Outputs ========== */
   .output {
+    text-align: left;
+    display: block;
+    width: 100%;
     border-top: 1px solid #e5e7eb;
     padding: 1rem;
   }
@@ -461,6 +516,7 @@
     padding: 0.75rem;
     border-radius: 8px;
     background: #ffffff;
+    overflow-x: scroll;
   }
 
   .output-box.ok {
@@ -533,5 +589,34 @@
     100% {
       clip-path: polygon(50% 50%, 0 0, 100% 0, 100% 100%, 0 100%, 0 0);
     }
+  }
+
+  .run-all-btns {
+    display: flex;
+    gap: 6px;
+  }
+
+  .run-all-btn {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    border: 1px solid #d1d5db;
+    background: #f9fafb;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: #374151;
+    transition: all 0.15s ease;
+  }
+
+  .run-all-btn:hover {
+    background: #e5e7eb;
+    border-color: #9ca3af;
+  }
+
+  .run-all-btn:active {
+    background: #d1d5db;
   }
 </style>
