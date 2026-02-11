@@ -6,7 +6,6 @@
     type NotebookChange,
     YNotebook,
     type ISharedCell,
-    type YCellType,
   } from "../python-yjs-suede";
 
   type SupportedCellType = (YCodeCell | YMarkdownCell)["cell_type"];
@@ -16,12 +15,11 @@
     "request select": [];
     "request select next": [type: SupportedCellType | "any"];
     "request select previous": [type: SupportedCellType | "any"];
-    run: [];
   };
 
   const isSupportedCell = (
-    cell: ISharedCell | YCellType,
-  ): cell is (ISharedCell | YCellType) & { cell_type: SupportedCellType } =>
+    cell: ISharedCell,
+  ): cell is ISharedCell & { cell_type: SupportedCellType } =>
     cell.cell_type === ("code" satisfies SupportedCellType) ||
     cell.cell_type === ("markdown" satisfies SupportedCellType);
 
@@ -72,18 +70,12 @@
         args.kernel ?? new PythonKernel(PythonKernel.DefaultEnvironment());
       this.listener = this.onChange.bind(this);
       this.changed.connect(this.listener);
-      this.cellProxies = this.cells.map((cell) => {
-        if (!isSupportedCell(cell))
-          throw new Error(`Unsupported cell type: ${cell.cell_type}`);
-        return new CellProxy(cell.id, cell.cell_type);
-      });
     }
 
     onChange(_: YNotebook, change: NotebookChange) {
-      console.log("Notebook change:", change);
       const { cellProxies: cellIDs } = this;
       let cellIndex = 0;
-      change?.cellsChange?.forEach(({ retain, delete: _delete, insert }) => {
+      change.cellsChange?.forEach(({ retain, delete: _delete, insert }) => {
         if (retain !== undefined) cellIndex += retain;
         if (_delete) cellIDs.splice(cellIndex, _delete);
         if (insert) {
@@ -130,7 +122,6 @@
       if (model.cellProxies[i].type === type) return i;
       i += direction;
     }
-    return model.cellProxies[i]?.type === type ? i : selectedIndex;
   };
 
   $effect(() =>
@@ -146,13 +137,11 @@
   const getRunID = () => ++model.runID;
 
   const wrappers = new Array<HTMLElement>();
-  const tops = new Array<HTMLElement>();
-  const bottoms = new Array<HTMLElement>();
 
   const scrollTo = (index: number) =>
     wrappers[index]?.scrollIntoView({
       behavior: "smooth",
-      block: "nearest",
+      block: "center",
       inline: "nearest",
     });
 
@@ -166,49 +155,33 @@
       throw new Error(`Cell ID mismatch: expected ${id}, got ${cell.id}`);
     return cell;
   };
-
-  export const getModel = () => model;
-
-  const runRange = (start: number, end?: number) => {
-    end ??= model.cellProxies.length;
-    for (let i = start; i < end; i++) {
-      const proxy = model.cellProxies[i];
-      if (proxy.type === "code") proxy.fire("run");
-    }
-  };
 </script>
 
-<div style:height="100%" style:width="100%" style:overflow="hidden">
-  <div
-    bind:this={container}
-    style:height="100%"
-    style:padding="1rem"
-    style:gap="1rem"
-    style:overflow-y="auto"
-  >
-    {#each model.cellProxies as proxy, index}
-      {@const cell = getCell(index, proxy.id)}
-      <div bind:this={wrappers[index]}>
-        {#if cell.cell_type === "code"}
-          {@const selected = selectedIndex === index}
-          {@const reveal = () => scrollTo(index)}
-          {@const runAbove = () => runRange(0, index)}
-          {@const runBelow = () => runRange(index + 1)}
-          <Code
-            notebook={model}
-            {proxy}
-            {cell}
-            {getRunID}
-            {selected}
-            {reveal}
-            {index}
-            {runAbove}
-            {runBelow}
-          />
-        {:else if cell.cell_type === "markdown"}
-          <Markdown {cell} />
-        {/if}
-      </div>
-    {/each}
-  </div>
+<div
+  bind:this={container}
+  style:height="100%"
+  style:padding="1rem"
+  style:gap="1rem"
+  style:overflow="auto"
+>
+  {#each model.cellProxies as proxy, index}
+    {@const cell = getCell(index, proxy.id)}
+    <div bind:this={wrappers[index]}>
+      {#if cell.cell_type === "code"}
+        {@const selected = selectedIndex === index}
+        {@const reveal = () => scrollTo(index)}
+        <Code
+          notebook={model}
+          {proxy}
+          {cell}
+          {getRunID}
+          {selected}
+          {reveal}
+          {index}
+        />
+      {:else if cell.cell_type === "markdown"}
+        <Markdown {cell} />
+      {/if}
+    </div>
+  {/each}
 </div>

@@ -17,32 +17,19 @@ export const is = (query: any): query is Payload =>
  */
 export function patchMatplotlib(module: { runPython: (code: string) => any }) {
   // Switch to simpler matplotlib backend https://github.com/jupyterlite/jupyterlite/blob/main/packages/pyolite-kernel/py/pyolite/pyolite/patches.py
+  module.runPython(`import os
+os.environ["MPLBACKEND"] = "AGG"`);
 
-  module.runPython(`
-import js
-import matplotlib
+  module.runPython(`import matplotlib
 import matplotlib.pyplot
-import base64
-import io
-
-class Dud:
-
-    def __init__(self, *args, **kwargs) -> None:
-        return
-
-    def __getattr__(self, __name: str):
-        return Dud
 
 def show():
-  js.document = Dud()
   canvas = matplotlib.pyplot.gcf().canvas
   canvas.draw()
-  buf = io.BytesIO()
-  canvas.print_png(buf)
-  buf.seek(0)
-  encoded = base64.b64encode(buf.read()).decode('ascii')
+  pixels = canvas.buffer_rgba().tobytes()
+  encoded = base64.b64encode(pixels).decode('utf-8')
   width, height = canvas.get_width_height()
-  return { '${"base64" satisfies keyof Payload}': encoded, '${"width" satisfies keyof Payload}': int(width), '${"height" satisfies keyof Payload}': int(height) }
+  return { '${"base64" satisfies keyof Payload}': encoded, '${"width" satisfies keyof Payload}': width, '${"height" satisfies keyof Payload}': height }
 
 matplotlib.pyplot.show = show
 `);

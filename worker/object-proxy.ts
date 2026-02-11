@@ -140,39 +140,34 @@ export class ObjectProxyHost {
     // Variable length primitives. Not guaranteed to fit into the shared memory, but we know their size.
     else if (typeof value === "string") {
       memory.memory[0] = SERIALIZATION.STRING;
-      const bytes = textEncoder.encode(value);
-      const memorySize = memory.memory.byteLength;
-
-      // Tell the worker the payload size (NOT counting the type byte)
-      memory.writeSize(bytes.byteLength);
-
-      let offset = 0;
-
-      // First chunk: byte 0 is type, payload starts at byte 1
-      const firstTake = Math.min(bytes.byteLength, memorySize - 1);
-      memory.memory.set(bytes.subarray(0, firstTake), 1);
-      offset += firstTake;
-
-      this.writeMemoryContinuation = () => {
-        if (offset >= bytes.byteLength) {
-          this.writeMemoryContinuation = undefined;
-          memory.unlockSize();
-          return;
-        }
-
-        const take = Math.min(bytes.byteLength - offset, memorySize);
-        // Subsequent chunks fill from 0..take
-        memory.memory.set(bytes.subarray(offset, offset + take), 0);
-
-        // Optional but nice: clear the tail so stale bytes can’t leak into debugging
-        // memory.memory.fill(0, take);
-
-        offset += take;
+      // A string encoded in utf-8 uses at most 4 bytes per character
+      if (value.length * 4 <= memory.memory.byteLength) {
+        const data = textEncoder.encode(value);
+        memory.memory.set(data, 1);
+        memory.writeSize(data.byteLength);
         memory.unlockSize();
-      };
-
-      // Unblock worker for the first chunk
-      memory.unlockSize();
+      } else {
+        // Longer strings need to be sent piece by piece
+        const bytes = textEncoder.encode(value);
+        const memorySize = memory.memory.byteLength;
+        let offset = 0;
+        let remainingBytes = bytes.byteLength;
+        memory.memory.set(bytes.subarray(offset, memorySize - 1), 1);
+        offset += memorySize - 1;
+        remainingBytes -= memorySize - 1;
+        this.writeMemoryContinuation = () => {
+          if (remainingBytes > 0) {
+            memory.memory.set(bytes.subarray(offset, memorySize), 0);
+            offset += memorySize;
+            remainingBytes -= memorySize;
+          } else {
+            this.writeMemoryContinuation = undefined;
+          }
+          memory.unlockSize();
+        };
+        memory.writeSize(bytes.byteLength);
+        memory.unlockSize();
+      }
     } else if (typeof value === "bigint") {
       memory.memory[0] = SERIALIZATION.BIGINT;
       const digits = value.toString();
@@ -478,13 +473,7 @@ export class ObjectProxyClient {
 
         if (typeof value !== "function") return value;
         // TODO: Special handling for .bind, .apply and more
-        /* Functions needprivate getThisArgIdOrUndefined(thisArg: any) {
-  if (thisArg && (typeof thisArg === "object" || typeof thisArg === "function")) {
-    const id = (thisArg as any)[ObjectId];
-    if (typeof id === "string") return id;
-  }
-  return undefined;
-} special handling
+        /* Functions need special handling
          * https://stackoverflow.com/questions/27983023/proxy-on-dom-element-gives-error-when-returning-functions-that-implement-interfa
          * https://stackoverflow.com/questions/37092179/javascript-proxy-objects-dont-work
          */
@@ -616,14 +605,6 @@ export class ObjectProxyClient {
       throw result.error;
     }
     return result.value;
-  }
-
-  private getIdOrFallback(x: any, fallbackId: string): string {
-    if (x && (typeof x === "object" || typeof x === "function")) {
-      const id = (x as any)[ObjectId];
-      if (typeof id === "string" && id.length) return id;
-    }
-    return fallbackId;
   }
 }
 

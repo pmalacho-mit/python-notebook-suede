@@ -32,12 +32,7 @@ export namespace Run {
   }>;
 }
 
-const fromRoot = ({ fs: { root } }: Environment, path: string) =>
-  root.endsWith("/")
-    ? root + path.replace(/^\/+/, "")
-    : root + "/" + path.replace(/^\/+/, "");
-
-const defaultPath = (env: Environment) => fromRoot(env, "temp.py");
+const defaultPath = (env: Environment) => env.fs.root + "/temp.py";
 
 const handleMessages = ({
   worker,
@@ -136,8 +131,7 @@ export default class PythonKernel {
     const path =
       typeof arg === "string"
         ? defaultPath(this.environment)
-        : (fromRoot(this.environment, arg.path ?? "temp.py") ??
-          defaultPath(this.environment));
+        : (arg.path ?? defaultPath(this.environment));
 
     const { worker, ready, runChain, callbacks } = this;
 

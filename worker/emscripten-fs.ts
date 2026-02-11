@@ -99,7 +99,7 @@ const methods = (
     ERRNO_CODES,
   }: Pick<PyodideAPI, "FS" | "ERRNO_CODES"> & { FS: AdvancedEmscriptenFS },
   custom: NotebookFilesystemSync,
-  log: boolean = true,
+  log: boolean = false,
 ) => {
   let createNode: AdvancedEmscriptenFS["createNode"];
 
@@ -339,10 +339,8 @@ const methods = (
     mode: number,
     dev?: any,
   ) => {
-    if (!FS.isDir(mode) && !FS.isFile(mode)) {
-      console.error("createNode: Invalid mode", mode);
+    if (!FS.isDir(mode) && !FS.isFile(mode))
       throw new FS.ErrnoError(ERRNO_CODES["EINVAL"]);
-    }
     const node = FS.createNode(parent, name, mode, dev) as CreatedNode;
     node.node_ops = nodeOps;
     node.stream_ops = streamOps;

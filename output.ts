@@ -42,10 +42,7 @@ export const is = <T extends Output.Type>(
 
 type ErrorProperties = Pick<Output.Error, "ename" | "evalue" | "traceback">;
 
-const src = (base64: string) =>
-  base64.startsWith("data:image/png;base64,")
-    ? base64
-    : `data:image/png;base64,${base64}`;
+const src = (base64: string) => `data:image/png;base64,${base64}`;
 
 export function accessor(output: Output.Error): ErrorProperties;
 export function accessor(
@@ -151,7 +148,6 @@ export function form(
     case "display_data":
       // only image supported for now
       const { width, height, base64 } = third as Payload;
-      console.log("form display_data", base64);
       return {
         output_type: "display_data",
         metadata: { width, height },
