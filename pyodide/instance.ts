@@ -58,6 +58,7 @@ export class PyodideInstance {
   readonly interruptBuffer: Uint8Array<ArrayBufferLike>;
 
   proxiedGlobalThis: undefined | any;
+
   pyodide: PyodideAPI | undefined = undefined;
 
   constructor(options: {
@@ -84,14 +85,21 @@ export class PyodideInstance {
     this.pyodide.setStdout(stdout);
     this.pyodide.setStderr(stderr);
 
+    await patchMatplotlib(this.pyodide);
+
     this.pyodide.setInterruptBuffer(this.interruptBuffer);
 
-    this.pyodide.FS.mkdirTree(root);
+    try {
+      this.pyodide.FS.mkdirTree(root);
+    } catch (e) {
+      console.error("Error creating mount directory in FS", e, root);
+    }
+
     this.pyodide.FS.mount(new EMFS(this.pyodide, manager.syncFs), {}, root);
     this.pyodide.registerJsModule("js", this.proxiedGlobalThis);
   }
 
-  async load(code: string, filename: string): Promise<void> {
+  async load(code: string): Promise<void> {
     if (!this.pyodide) {
       console.warn("Worker has not yet been initialized");
       return;
@@ -149,29 +157,28 @@ export class PyodideInstance {
 
     if (result === undefined || result === null) return;
     else if (result instanceof this.pyodide.ffi.PyProxy) {
-      if (result._repr_html_ !== undefined)
-        return form(
-          "execute_result",
-          "html",
-          this.destroyToJsResult(result)._repr_html_(),
-        );
-      else if (result._repr_latex_ !== undefined)
-        return form(
-          "execute_result",
-          "latex",
-          this.destroyToJsResult(result)._repr_latex_(),
-        );
-      else if (image(result)) return form("display_data", "image", result);
-      else
-        return form(
-          "execute_result",
-          "plain",
-          this.destroyToJsResult(result).__str__(),
-        );
+      if (result._repr_html_ !== undefined) {
+        const html = result._repr_html_();
+        this.destroyToJsResult(result);
+        return form("execute_result", "html", html);
+      } else if (result._repr_latex_ !== undefined) {
+        const latex = result._repr_latex_();
+        this.destroyToJsResult(result);
+        return form("execute_result", "latex", latex);
+      } else if (image(result.toJs({ dict_converter: Object.fromEntries }))) {
+        const jsResult = result.toJs({ dict_converter: Object.fromEntries });
+        console.log("image result", jsResult);
+        result.destroy();
+        return form("display_data", "image", jsResult);
+      } else {
+        const str = result.__str__();
+        this.destroyToJsResult(result);
+        return form("execute_result", "plain", str);
+      }
     } else if (result instanceof this.pyodide.ffi.PythonError) {
       const { message, type } = result;
       const ename = type;
-      const evalue = message.split(`${type}: `)[1].trim();
+      const evalue = message.split(`${type}: `)[1]?.trim() ?? "";
       const lines = message.split("\n");
       const firstFileLine = lines.findIndex((line) => line.includes(filename))!;
       const traceback = lines.slice(firstFileLine);

@@ -28,11 +28,16 @@ export namespace Run {
 
   export type Job = Expand<{
     interrupt: () => void;
-    result: Promise<any>;
+    result: Promise<Output.Specific[]>;
   }>;
 }
 
-const defaultPath = (env: Environment) => env.fs.root + "/temp.py";
+const fromRoot = ({ fs: { root } }: Environment, path: string) =>
+  root.endsWith("/")
+    ? root + path.replace(/^\/+/, "")
+    : root + "/" + path.replace(/^\/+/, "");
+
+const defaultPath = (env: Environment) => fromRoot(env, "temp.py");
 
 const handleMessages = ({
   worker,
@@ -131,7 +136,8 @@ export default class PythonKernel {
     const path =
       typeof arg === "string"
         ? defaultPath(this.environment)
-        : (arg.path ?? defaultPath(this.environment));
+        : (fromRoot(this.environment, arg.path ?? "temp.py") ??
+          defaultPath(this.environment));
 
     const { worker, ready, runChain, callbacks } = this;
 
@@ -241,4 +247,6 @@ export default class PythonKernel {
       },
     },
   });
+
+  static Default = () => new PythonKernel(PythonKernel.DefaultEnvironment());
 }
