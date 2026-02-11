@@ -6,7 +6,7 @@
 [subrepo]
 	remote = https://github.com/pmalacho-mit/python-notebook-suede
 	branch = release
-	commit = 653de05072c46f3006cae321c9e39aec83a936a9
-	parent = 78ab555452b5c0320eaa6120c5fdd0271b51f9a0
+	commit = c92167425719bea1ac1d1d5fb420bb11f72027cf
+	parent = a6020db50f7eb27d6bf949cef30536a1e687f4ba
 	method = merge
 	cmdver = 0.4.9

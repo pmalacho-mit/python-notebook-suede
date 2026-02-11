@@ -98,7 +98,7 @@ const handler = {
   },
   onRun: async (manager, { code, file: filename }) => {
     try {
-      await manager.pyodide.load(code, filename);
+      await manager.pyodide.load(code);
       manager.postMessage({ type: "loaded" });
       const value = await manager.pyodide.runCode(code, filename);
       if (value) manager.output(value);
@@ -150,7 +150,6 @@ export class Kernel {
       "type"
     > as Kernel.Response<"output">;
     casted.type = "output";
-    console.log(output);
     this.postMessage(casted);
   }
 
