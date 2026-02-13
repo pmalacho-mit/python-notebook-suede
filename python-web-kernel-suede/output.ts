@@ -1,11 +1,10 @@
 import type { Expand } from "./utils";
-import { type YCodeCell } from "../python-yjs-suede";
-import type { MultilineString } from "@jupyterlab/nbformat";
+import type { MultilineString, IOutput } from "@jupyterlab/nbformat";
 import type { Payload } from "./pyodide/matplotlib";
 import { renderToString } from "katex";
 
 export namespace Output {
-  export type Any = Parameters<YCodeCell["setOutputs"]>[0][number];
+  export type Any = IOutput;
   export type Type = "stream" | "display_data" | "execute_result" | "error";
   export type Map = Expand<
     {

@@ -74,15 +74,21 @@
     {#if selection}
       {#await fetch(resolve(`./${selection}.ipynb` as any)) then response}
         {#await response.json() then ipynbText}
-          <Notebook
-            model={Model.FromSerialized(
-              {
-                ydoc: new Y.Doc(),
-                file: { name: "example.ipynb", path: "example.ipynb" },
-              },
-              ipynbText,
-            )}
-          />
+          {@const model = Model.FromSerialized(
+            {
+              ydoc: new Y.Doc(),
+              file: { name: "example.ipynb", path: "example.ipynb" },
+            },
+            ipynbText,
+          )}
+          <div>
+            <button
+              onclick={() => {
+                console.log(model.source);
+              }}>log src</button
+            >
+          </div>
+          <Notebook {model} />
         {:catch error}
           <p style="color: red;">
             Error reading notebook content: {error.message}
