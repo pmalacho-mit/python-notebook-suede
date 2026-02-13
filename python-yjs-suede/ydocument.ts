@@ -28,7 +28,11 @@ export abstract class YDocument<
     this._awareness = new Awareness(this._ydoc);
 
     this._ystate.observe(this.onStateChanged);
+
+    this.destroyDocOnDispose = options?.destroyDocOnDispose ?? true;
   }
+
+  readonly destroyDocOnDispose: boolean;
 
   /**
    * Document version
@@ -116,7 +120,7 @@ export abstract class YDocument<
     this.ystate.unobserve(this.onStateChanged);
     this.awareness.destroy();
     this.undoManager.destroy();
-    this.ydoc.destroy();
+    if (this.destroyDocOnDispose) this.ydoc.destroy();
     this._disposed.emit();
     Signal.clearData(this);
   }
@@ -246,5 +250,10 @@ export namespace YDocument {
      * The optional YJS document for YDocument.
      */
     ydoc?: Y.Doc;
+
+    /**
+     * Whether to destroy the Y.Doc on dispose (default: true).
+     */
+    destroyDocOnDispose?: boolean;
   }
 }
