@@ -1,5 +1,5 @@
 <script lang="ts">
-  import Code from "./CodeCell.svelte";
+  import Code from "./Code.svelte";
   import Markdown from "./Markdown.svelte";
   import { Notebook as Model, type SupportedCell } from "./models.svelte";
   import { WithEvents } from "../with-events-suede";
@@ -34,8 +34,6 @@
   const getRunID = () => ++model.runID;
 
   const wrappers = new Array<HTMLElement>();
-  const tops = new Array<HTMLElement>();
-  const bottoms = new Array<HTMLElement>();
 
   const scrollTo = (index: number) =>
     wrappers[index]?.scrollIntoView({

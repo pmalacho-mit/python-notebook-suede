@@ -1,5 +1,6 @@
 <script lang="ts" module>
   import type { Text } from "yjs";
+  import { Output } from "../python-web-kernel-suede";
 
   class File implements Editor.Model {
     index = $state<number>(0);
@@ -51,7 +52,7 @@
   const trap = (event: Event) => event.stopPropagation();
 
   const trySanitizeError = (output: Output.Specific, file: File) => {
-    if (!is(output, "error")) return output;
+    if (!Output.is(output, "error")) return output;
     const { traceback } = output;
     for (let i = 0; i < traceback.length; i++)
       traceback[i] = file.removeSuffixExtension(traceback[i]);
@@ -73,7 +74,7 @@
 
 <script lang="ts">
   import { YCodeCell, type CellChange } from "../python-yjs-suede";
-  import type { Run } from "./PythonKernel";
+  import { type Run, snippets } from "../python-web-kernel-suede";
   import { Editor } from "../python-monaco-suede";
   import * as monaco from "monaco-editor/esm/vs/editor/editor.api";
   import {
@@ -81,7 +82,6 @@
     installNotebookCellKeybindings,
   } from "./monaco";
   import type { CellProxy, Notebook } from "./models.svelte";
-  import { accessor, is, type Output } from "./output";
 
   let {
     cell,
@@ -124,8 +124,9 @@
     if (outputsChange && outputsChange.length > 0) {
       outputs = cell.outputs;
       for (const output of outputs) {
-        if (is(output, "error")) return select();
-        if (is(output, "stream") && output.name === "stderr") return select();
+        if (Output.is(output, "error")) return select();
+        if (Output.is(output, "stream") && output.name === "stderr")
+          return select();
       }
     }
   };
@@ -306,92 +307,18 @@
         onclick={() => tryFocus("end")}
       >
         {#each outputs as output}
-          {@const specific = output as Output.Specific}
           {@const error =
-            specific.output_type === "error" ||
-            (specific.output_type === "stream" && specific.name === "stderr")}
+            output.output_type === "error" ||
+            (output.output_type === "stream" && output.name === "stderr")}
           {@const ok = !error}
           <div class="output-box" class:error class:ok>
-            {#if specific.output_type === "stream"}
-              {@render stream(specific)}
-            {:else if specific.output_type === "display_data"}
-              {@render displayData(specific)}
-            {:else if specific.output_type === "execute_result"}
-              {@render executeResult(specific)}
-            {:else if specific.output_type === "error"}
-              {@render errorResult(specific)}
-            {:else}
-              {@render unrecognized("output_type", output.output_type)}
-            {/if}
+            {@render snippets.output.any(output)}
           </div>
         {/each}
       </button>
     </div>
   </div>
 </div>
-
-{#snippet unrecognized(identifier: string | Output.Any, detail: string)}
-  <div>
-    Unrecognized {typeof identifier === "string"
-      ? identifier
-      : identifier.output_type} ({detail}). Please contact the Pytutor
-    maintainers and/or your professor.
-  </div>
-{/snippet}
-
-{#snippet stream(output: Output.Stream)}
-  {@const access = accessor(output)}
-  {@const text = access.out ?? access.err}
-
-  {#if Array.isArray(text)}
-    {#each text as line}
-      {@render row(line)}
-    {/each}
-  {:else if typeof text === "string"}
-    {@render row(text)}
-  {:else}
-    {@render unrecognized("stream", JSON.stringify(typeof text))}
-  {/if}
-
-  {#snippet row(line: string)}
-    <div style:white-space="pre-line">
-      {line}
-    </div>
-  {/snippet}
-{/snippet}
-
-{#snippet displayData(output: Output.DisplayData)}
-  {@const access = accessor(output)}
-  {#if access.image}
-    <img src={access.image} alt="display output" />
-  {:else}
-    {@render unrecognized(output, JSON.stringify(Object.keys(output.data)))}
-  {/if}
-{/snippet}
-
-{#snippet executeResult(output: Output.ExecuteResult)}
-  {@const access = accessor(output)}
-  {#if access.html}
-    <div {@attach evalScriptTagsHack}>
-      {@html access.html}
-    </div>
-  {:else if access.plain}
-    <div style:white-space="pre-line">
-      {access.plain}
-    </div>
-  {:else}
-    {@render unrecognized(output, JSON.stringify(Object.keys(output.data)))}
-  {/if}
-{/snippet}
-
-{#snippet errorResult(output: Output.Error)}
-  <strong>{output.ename}: {output.evalue}</strong>
-  <pre>
-    {#each output.traceback as line}
-      {line}
-    {/each}
-  </pre>
-{/snippet}
 
 <style>
   /* ========== Cells ========== */
