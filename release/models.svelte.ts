@@ -7,8 +7,7 @@ import {
   type ISharedCell,
   type YCellType,
 } from "../python-yjs-suede";
-import { type Output } from "./output";
-import type PythonKernel from "./PythonKernel";
+import type { Output, Kernel } from "../python-web-kernel-suede";
 
 export type SupportedCell = (YCodeCell | YMarkdownCell)["cell_type"];
 
@@ -51,7 +50,7 @@ export class CellProxy extends WithEvents<Events.Cell> {
 }
 
 export class Notebook extends YNotebook {
-  readonly kernel: PythonKernel;
+  readonly kernel: Kernel;
   readonly events = new WithEvents<Events.Notebook>();
 
   runID = $state<number>(0);
