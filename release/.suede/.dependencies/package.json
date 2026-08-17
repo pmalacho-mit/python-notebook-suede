@@ -1,0 +1,11 @@
+{
+  "dependencies": {
+    "@jupyter/ydoc": "^4.1.1",
+    "@jupyterlab/nbformat": "^4.5.4",
+    "katex": "^0.16.28",
+    "marked": "^17.0.1",
+    "monaco-editor": "npm:@codingame/monaco-vscode-editor-api@~20.2.1",
+    "y-monaco": "^0.1.6",
+    "yjs": "^13.5.40"
+  }
+}

@@ -2,3 +2,7 @@
 !.dependencies/*.gitrepo
 !.dependencies/package.json
 !.dependencies/requirements.txt
+.suede/.dependencies/*
+!.suede/.dependencies/*.gitrepo
+!.suede/.dependencies/package.json
+!.suede/.dependencies/requirements.txt

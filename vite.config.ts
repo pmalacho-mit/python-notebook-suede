@@ -1,31 +1,18 @@
 import tailwindcss from "@tailwindcss/vite";
 import { sveltekit } from "@sveltejs/kit/vite";
 import { defineConfig } from "vite";
-import { applyConfig } from "./python-monaco-suede/config/vite";
+import { applyConfig as withMonaco } from "./python-notebook-suede.python-monaco-suede/config/vite";
+import { applyConfig as withKernel } from "./python-notebook-suede.python-web-kernel-suede/config/vite";
 
-export default applyConfig(
-  defineConfig({
-    server: {
-      host: "0.0.0.0",
-      headers: {
-        "Cross-Origin-Embedder-Policy": "require-corp",
-        "Cross-Origin-Opener-Policy": "same-origin",
+export default withKernel(
+  withMonaco(
+    defineConfig({
+      server: {
+        host: "0.0.0.0",
+        fs: { allow: ["./release"] },
       },
-      fs: {
-        allow: [
-          "./release",
-          "./python-monaco-suede",
-          "./with-events-suede",
-          "./python-yjs-suede",
-        ],
-      },
-    },
-    plugins: [tailwindcss(), sveltekit()],
-    worker: {
-      format: "es",
-    },
-  }),
-  {
-    base: `"./"`,
-  },
+      plugins: [tailwindcss(), sveltekit()],
+    }),
+    { base: `"./"` },
+  ),
 );

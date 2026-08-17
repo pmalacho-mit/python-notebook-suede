@@ -1,42 +1,63 @@
-<script lang="ts">
-  import { resolve } from "$app/paths";
-  import Notebook, { Model } from "../../../release/Notebook.svelte";
+<script lang="ts" module>
+  import { YNotebook } from "@jupyter/ydoc";
+  import { Notebook, kernelFor } from "../../../release";
+  import { load } from "$lib/samples";
+  import { connect } from "$lib/sync";
   import { harness } from "../../suede/testyjs-suede";
 
-  const { is, indexedSrc } = harness.iframe();
-  const { ydoc } = harness.doc({ guid: "collab-notebook" });
+  const ROOM = "collab-notebook";
+  const PEERS = 2;
 
-  let frames = $state<HTMLIFrameElement[]>(
-    Array.from({ length: 1 }, () => null!),
-  );
+  /** One peer seeds the room; the rest take what the server already has. */
+  const join = async (index: number) => {
+    const shared = new YNotebook();
+    const { synced } = connect(shared, ROOM);
+    await synced;
+    if (index === 0 && shared.cells.length === 0)
+      shared.fromJSON(await load("part1"));
+    return Notebook.Model.shared(shared, {
+      kernel: kernelFor(),
+      parent: { path: "notebooks" },
+      name: "part1.ipynb",
+    });
+  };
+</script>
+
+<script lang="ts">
+  const { is, indexedSrc, index } = harness.iframe();
 </script>
 
 {#if is}
-  {#await fetch(resolve(`./part1.ipynb` as any)) then response}
-    {#await response.json() then ipynbText}
-      <Notebook
-        model={Model.FromSerialized(
-          {
-            ydoc,
-            file: { name: "example.ipynb", path: "example.ipynb" },
-          },
-          ipynbText,
-        )}
-      />
-    {/await}
+  {#await join(index)}
+    <p>Connecting…</p>
+  {:then notebook}
+    <Notebook.Component {notebook} />
+  {:catch error}
+    <p class="error">{error.message}</p>
   {/await}
 {:else}
-  <div style:display="flex" style:flex-direction="row" style:height="100vh">
-    {#each frames as _, index}
-      {@const src = indexedSrc(index)}
-      <iframe
-        {src}
-        bind:this={frames[index]}
-        title="frame {index}"
-        style:border="1px solid black"
-        style:height="100%"
-        style:width="100%"
-      ></iframe>
+  <div class="peers">
+    {#each Array.from({ length: PEERS }, (_, at) => at) as at (at)}
+      <iframe src={indexedSrc(at)} title="peer {at + 1}"></iframe>
     {/each}
   </div>
 {/if}
+
+<style>
+  .peers {
+    display: flex;
+    height: 100vh;
+  }
+
+  iframe {
+    flex: 1;
+    height: 100%;
+    border: 0;
+    border-right: 1px solid #d1d5db;
+  }
+
+  .error {
+    color: #991b1b;
+    padding: 1rem;
+  }
+</style>
