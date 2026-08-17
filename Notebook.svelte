@@ -1,107 +1,144 @@
-<script lang="ts">
-  import Code from "./Code.svelte";
-  import Markdown from "./Markdown.svelte";
-  import { Notebook as Model, type SupportedCell } from "./models.svelte";
-  import { WithEvents } from "../with-events-suede";
+<script lang="ts" module>
+  import Frame from "./cell/Frame.svelte";
+  import Insert from "./cell/Insert.svelte";
+  import { chainedCells } from "./editor/chain";
+  import type { Notebook } from "./model/notebook.svelte";
 
-  let { model }: { model: Model } = $props();
-
-  let selectedIndex = $state<number | undefined>();
-  let container = $state<HTMLElement>();
-
-  const search = (type: SupportedCell, direction: 1 | -1) => {
-    if (selectedIndex === undefined) return;
-    let i = selectedIndex + direction;
-    while (i >= 0 && i < model.cellProxies.length) {
-      if (model.cellProxies[i].type === type) return i;
-      i += direction;
-    }
-    return model.cellProxies[i]?.type === type ? i : selectedIndex;
+  export type Props = {
+    notebook: Notebook;
+    fontSize?: number;
   };
 
-  $effect(() =>
-    WithEvents.Collect(model.cellProxies).subscribe({
-      "request select": (_, index) => (selectedIndex = index),
-      "request select next": (type, _, index) =>
-        (selectedIndex = type === "any" ? index + 1 : search(type, 1)),
-      "request select previous": (type, _, index) =>
-        (selectedIndex = type === "any" ? index - 1 : search(type, -1)),
-      keydown: (event, _, index) =>
-        model.events.fire("cell keydown", index, event),
-    }),
-  );
+  const pressed = (event: KeyboardEvent) => event.key.toLowerCase();
 
-  const getRunID = () => ++model.runID;
+  /** How a notebook has always spelled it, and how the platform does. */
+  const undoes = (event: KeyboardEvent) =>
+    pressed(event) === "z" && !event.shiftKey;
 
-  const wrappers = new Array<HTMLElement>();
-
-  const scrollTo = (index: number) =>
-    wrappers[index]?.scrollIntoView({
-      behavior: "smooth",
-      block: "nearest",
-      inline: "nearest",
-    });
-
-  $effect(() => {
-    wrappers.length = model.cellProxies.length;
-  });
-
-  const getCell = (index: number, id: string) => {
-    const cell = model.getCell(index);
-    if (cell.id !== id)
-      throw new Error(`Cell ID mismatch: expected ${id}, got ${cell.id}`);
-    return cell;
-  };
-
-  export const getModel = () => model;
-
-  const runRange = (start: number, end?: number) => {
-    end ??= model.cellProxies.length;
-    for (let i = start; i < end; i++) {
-      const proxy = model.cellProxies[i];
-      if (proxy.type === "code") proxy.fire("run");
-    }
-  };
-
-  $effect(() =>
-    WithEvents.Collect(model.cellProxies).subscribe({
-      "cell executed": (outputs, runID, _, index) =>
-        model.events.fire("cell executed", index, outputs, runID),
-    }),
-  );
+  const redoes = (event: KeyboardEvent) =>
+    (pressed(event) === "z" && event.shiftKey) || pressed(event) === "y";
 </script>
 
-<div style:height="100%" style:width="100%" style:overflow="hidden">
-  <div
-    bind:this={container}
-    style:height="100%"
-    style:padding="1rem"
-    style:gap="1rem"
-    style:overflow-y="auto"
-  >
-    {#each model.cellProxies as proxy, index}
-      {@const cell = getCell(index, proxy.id)}
-      <div bind:this={wrappers[index]}>
-        {#if cell.cell_type === "code"}
-          {@const selected = selectedIndex === index}
-          {@const reveal = () => scrollTo(index)}
-          {@const runAbove = () => runRange(0, index)}
-          {@const runBelow = () => runRange(index + 1)}
-          <Code
-            notebook={model}
-            {proxy}
-            {cell}
-            {getRunID}
-            {selected}
-            {reveal}
-            {index}
-            {runAbove}
-            {runBelow}
-          />
-        {:else if cell.cell_type === "markdown"}
-          <Markdown {cell} />
-        {/if}
-      </div>
+<script lang="ts">
+  let { notebook, fontSize = 14 }: Props = $props();
+
+  const chain = chainedCells(() => notebook.files);
+
+  $effect(chain.register);
+  $effect(() => chain.settle());
+
+  let root = $state<HTMLElement>();
+
+  /** Two notebooks on a page each answer for the keys pressed inside them. */
+  const pressedHere = ({ target }: KeyboardEvent) =>
+    target instanceof Node && root?.contains(target) === true;
+
+  const take = (event: KeyboardEvent, run: () => void) => {
+    event.preventDefault();
+    run();
+  };
+
+  /** An editor with the keyboard undoes its own text; nothing here overrides it. */
+  const onkeydown = (event: KeyboardEvent) => {
+    if (notebook.editing || !pressedHere(event)) return;
+    if (undoes(event)) take(event, () => notebook.undo());
+    else if (redoes(event)) take(event, () => notebook.redo());
+  };
+</script>
+
+<svelte:window {onkeydown} />
+
+<div bind:this={root} class="notebook" data-testid="notebook" tabindex="-1">
+  <div class="toolbar">
+    <button
+      data-testid="run-all"
+      title="Run every cell, in order"
+      onclick={() => notebook.runAll()}
+    >
+      Run all
+    </button>
+    <button
+      data-testid="interrupt"
+      title="Stop whatever is running"
+      onclick={() => notebook.interrupt()}
+    >
+      Interrupt
+    </button>
+    <span class="divider"></span>
+    <button
+      data-testid="undo"
+      title="Undo the last change to the cells (Z)"
+      disabled={!notebook.undoable}
+      onclick={() => notebook.undo()}
+    >
+      Undo
+    </button>
+    <button
+      data-testid="redo"
+      title="Redo the last undone change to the cells (Shift+Z)"
+      disabled={!notebook.redoable}
+      onclick={() => notebook.redo()}
+    >
+      Redo
+    </button>
+  </div>
+
+  <div class="cells" data-testid="cells">
+    {#each notebook.cells as cell, index (cell.id)}
+      <Insert {notebook} at={index} />
+      <Frame {notebook} {cell} {fontSize} />
     {/each}
+    <Insert {notebook} at={notebook.cells.length} />
   </div>
 </div>
+
+<style>
+  .notebook {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    background: #f3f4f6;
+  }
+
+  .toolbar {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid #e5e7eb;
+    background: white;
+  }
+
+  .divider {
+    width: 1px;
+    align-self: stretch;
+    background: #e5e7eb;
+  }
+
+  .toolbar button {
+    font-size: 0.8125rem;
+    padding: 0.25rem 0.75rem;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    background: white;
+    color: #374151;
+    cursor: pointer;
+  }
+
+  .toolbar button:hover:not(:disabled) {
+    background: #f3f4f6;
+  }
+
+  .toolbar button:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+
+  .cells {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 0.5rem 1rem 2rem;
+  }
+</style>
