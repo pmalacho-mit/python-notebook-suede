@@ -14,6 +14,7 @@ export type {
   ProseCellStore,
 } from "./model/store";
 export type { NotebookOptions } from "./model/notebook.svelte";
+export type { CellsChange, Move } from "./model/changes";
 export { NotebookFiles, kernelFor } from "./execution/files";
 
 /** Where a notebook's cells can live. */

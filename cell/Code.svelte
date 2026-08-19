@@ -44,6 +44,12 @@
         notebook.select(cell);
         notebook.editing = true;
       }),
+      attached.onKeyDown((event) =>
+        notebook.fire("user keydown in code cell", cell, event),
+      ),
+      attached.onDidPaste((event) =>
+        notebook.fire("user paste in code cell", cell, event),
+      ),
       attached.onDidBlurEditorText(() => (notebook.editing = false)),
       installCellKeybindings(attached, commands),
       ...(container ? [growWithContent({ editor: attached, container })] : []),

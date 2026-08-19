@@ -6,7 +6,7 @@ import type { CellStore, CodeCellStore, Unsubscribe } from "./store";
 import { runnable } from "./store";
 import { join } from "../utils";
 
-export type Status = "idle" | "queued" | "running";
+export type Status = "idle" | "queued" | "running" | "interrupting";
 
 const withoutExtension = (name: string) => name.replace(/\.[^./]+$/, "");
 
@@ -140,9 +140,16 @@ export class CodeCell extends Cell {
     this.status = "idle";
   }
 
+  /**
+   * Python is asked to stop; whether it can is up to what it is doing. A cell
+   * blocked in `time.sleep` is not running bytecode, and the interpreter only
+   * looks between one bytecode and the next — so this reports that it was
+   * asked, and the run itself reports when it ended.
+   */
   interrupt() {
+    if (!this.busy) return;
     this.job?.interrupt();
-    this.status = "idle";
+    this.status = "interrupting";
   }
 
   protected absorb() {
