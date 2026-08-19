@@ -117,6 +117,81 @@
 </Sweater>
 
 <Sweater
+  name="a cell busy in Python stops when asked"
+  body={async (harness) => {
+    const { notebook } = harness.set(
+      new Pocket(["total = 0\nfor _ in range(10**9):\n    total += 1"]),
+    );
+    await rendered(harness.container, 1);
+
+    const [cell] = notebook.code;
+    const started = Date.now();
+    const job = notebook.run(cell);
+
+    await until(
+      "the cell to be running",
+      () => cell.status === "running",
+      KERNEL_TIMEOUT_MS,
+    );
+    cell.interrupt();
+    await job.result;
+
+    const elapsed = Date.now() - started;
+    harness.note(`Stopped after ${elapsed}ms; a billion iterations would not.`);
+    harness.expect(elapsed).toBeLessThan(20_000);
+    harness.expect(outputText(frames(harness.container)[0])).toContain(
+      "KeyboardInterrupt",
+    );
+  }}
+>
+  {#snippet vest(pocket: Pocket)}
+    <Notebook.Component notebook={pocket.notebook} />
+  {/snippet}
+</Sweater>
+
+<Sweater
+  name="a cell asleep in Python does not, and holds up the cells behind it"
+  body={async (harness) => {
+    const { notebook } = harness.set(
+      new Pocket(["import time\ntime.sleep(3)", "print('after')"]),
+    );
+    await rendered(harness.container, 2);
+
+    const [sleeping, next] = notebook.code;
+    const started = Date.now();
+    const asleep = notebook.run(sleeping);
+    const behind = notebook.run(next);
+
+    await until(
+      "the cell to be running",
+      () => sleeping.status === "running",
+      KERNEL_TIMEOUT_MS,
+    );
+    sleeping.interrupt();
+
+    // Asked, not done: the cell says so rather than claiming to have stopped.
+    harness.expect(sleeping.status).toBe("interrupting");
+    harness.expect(sleeping.busy).toBe(true);
+
+    await asleep.result;
+    harness.expect(sleeping.status).toBe("idle");
+
+    const elapsed = Date.now() - started;
+    harness.note(`Asked to stop at once; slept on for ${elapsed}ms.`);
+    harness.expect(elapsed).toBeGreaterThan(2_000);
+
+    // One interpreter, one namespace, one cell at a time: what was queued
+    // behind the sleep could not start until the sleep gave up the thread.
+    await behind.result;
+    harness.expect(outputText(frames(harness.container)[1])).toContain("after");
+  }}
+>
+  {#snippet vest(pocket: Pocket)}
+    <Notebook.Component notebook={pocket.notebook} />
+  {/snippet}
+</Sweater>
+
+<Sweater
   name="outputs are kept in the notebook, so they survive being serialised"
   body={async (harness) => {
     const { notebook } = harness.set(new Pocket(["1 + 1"]));

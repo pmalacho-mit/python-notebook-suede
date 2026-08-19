@@ -1,9 +1,12 @@
+import type * as monaco from "monaco-editor";
 import type { YNotebook } from "@jupyter/ydoc";
 import type { INotebookContent } from "@jupyterlab/nbformat";
 import type { Kernel } from "../../python-notebook-suede.python-web-kernel-suede";
+import { WithEvents } from "../../python-notebook-suede.with-events-suede";
 import { execute } from "../execution/run";
 import { labelsFor } from "../execution/traceback";
-import { Cell, CodeCell, cellFor, executable } from "./cell.svelte";
+import { type Cell, type CodeCell, cellFor, executable } from "./cell.svelte";
+import { NOCHANGES, between, nothingIn, type CellsChange } from "./changes";
 import { MemoryNotebook } from "./memory";
 import { SharedNotebook } from "./shared";
 import type { CellStore, CellType, NotebookStore, Unsubscribe } from "./store";
@@ -23,7 +26,9 @@ const ownDirectory = () => ({ path: `notebook-${++opened}` });
 const highestCount = (store: NotebookStore) =>
   store.cells.reduce(
     (highest, cell) =>
-      cell.type === "code" ? Math.max(highest, cell.executionCount ?? 0) : highest,
+      cell.type === "code"
+        ? Math.max(highest, cell.executionCount ?? 0)
+        : highest,
     0,
   );
 
@@ -40,7 +45,21 @@ export type NotebookOptions = {
 
 type Derived = Omit<NotebookOptions, "store">;
 
-export class Notebook {
+type Execution = ReturnType<typeof execute>;
+
+export class Notebook extends WithEvents<{
+  "user keydown in code cell": [cell: CodeCell, event: monaco.IKeyboardEvent];
+  "user paste in code cell": [cell: CodeCell, event: monaco.editor.IPasteEvent];
+  "code cell executed by user": [cell: CodeCell, result: Execution["result"]];
+  "cell added by user": [cell: Cell];
+  "cell removed by user": [cell: Cell];
+  "cell selected by user": [cell: Cell];
+  "cell moved by user": [cell: Cell, from: number, to: number];
+  "undo by user": [taken: CellsChange];
+  "redo by user": [restored: CellsChange];
+  /** Whoever caused it: this reader, a collaborator, or an undo. */
+  "cells changed": [change: CellsChange];
+}> {
   readonly store: NotebookStore;
   readonly kernel?: Kernel;
   readonly parent: { path: string };
@@ -57,6 +76,7 @@ export class Notebook {
   redoable = $state(false);
 
   private readonly adopted = new Map<CellStore, Cell>();
+  private latest: CellsChange = NOCHANGES;
   private readonly stop: Unsubscribe;
   private executions: number;
 
@@ -67,6 +87,7 @@ export class Notebook {
     name = DEFAULT_NAME,
     readonly = false,
   }: NotebookOptions) {
+    super();
     this.store = store;
     this.kernel = kernel;
     this.parent = parent ?? ownDirectory();
@@ -97,7 +118,9 @@ export class Notebook {
 
   add(type: CellType, at = this.cells.length) {
     this.store.insert(at, { type });
-    return this.cells[at];
+    const cell = this.cells[at];
+    this.fire("cell added by user", cell);
+    return cell;
   }
 
   addBelow(cell: Cell, type: CellType) {
@@ -107,18 +130,22 @@ export class Notebook {
   remove(cell: Cell) {
     const index = cell.index;
     if (index < 0) return;
-    if (this.selected === cell) this.selected = this.at(index + 1) ?? this.at(index - 1);
+    if (this.selected === cell)
+      this.selected = this.at(index + 1) ?? this.at(index - 1);
     this.store.remove(index);
+    this.fire("cell removed by user", cell);
   }
 
   move(cell: Cell, to: number) {
     const from = cell.index;
     if (from < 0 || to < 0 || to >= this.cells.length || to === from) return;
     this.store.move(from, to);
+    this.fire("cell moved by user", cell, from, to);
   }
 
   select(cell: Cell | undefined) {
     this.selected = cell;
+    if (cell) this.fire("cell selected by user", cell);
   }
 
   /**
@@ -127,16 +154,26 @@ export class Notebook {
    * answers for undo itself, and this is reached only from outside one.
    */
   undo() {
-    this.store.undo();
+    this.fire(
+      "undo by user",
+      this.whatChanges(() => this.store.undo()),
+    );
   }
 
   redo() {
-    this.store.redo();
+    this.fire(
+      "redo by user",
+      this.whatChanges(() => this.store.redo()),
+    );
   }
 
   /** The next cell of `type` in `step`'s direction, for keyboard navigation. */
   neighbour(from: Cell, step: 1 | -1, type?: CellType) {
-    for (let i = from.index + step; i >= 0 && i < this.cells.length; i += step) {
+    for (
+      let i = from.index + step;
+      i >= 0 && i < this.cells.length;
+      i += step
+    ) {
       const cell = this.cells[i];
       if (type === undefined || cell.type === type) return cell;
     }
@@ -144,7 +181,9 @@ export class Notebook {
   }
 
   run(cell: CodeCell) {
-    return execute(this.kernelOrThrow(), cell, () => ++this.executions);
+    const task = execute(this.kernelOrThrow(), cell, () => ++this.executions);
+    this.fire("code cell executed by user", cell, task.result);
+    return task;
   }
 
   runAll() {
@@ -152,11 +191,15 @@ export class Notebook {
   }
 
   runBefore(cell: Cell) {
-    this.code.filter((code) => code.index < cell.index).forEach((code) => this.run(code));
+    this.code
+      .filter((code) => code.index < cell.index)
+      .forEach((code) => this.run(code));
   }
 
   runAfter(cell: Cell) {
-    this.code.filter((code) => code.index > cell.index).forEach((code) => this.run(code));
+    this.code
+      .filter((code) => code.index > cell.index)
+      .forEach((code) => this.run(code));
   }
 
   interrupt() {
@@ -176,6 +219,7 @@ export class Notebook {
     this.stop();
     this.adopted.forEach((cell) => cell.dispose());
     this.adopted.clear();
+    this.clear();
   }
 
   private kernelOrThrow() {
@@ -184,12 +228,26 @@ export class Notebook {
     return this.kernel;
   }
 
+  /**
+   * What the store did in answer, as {@link absorb} saw it — so an undo can
+   * say what it took back rather than only that it happened. Both stores
+   * announce within the call that changed them.
+   */
+  private whatChanges(act: () => void) {
+    this.latest = NOCHANGES;
+    act();
+    return this.latest;
+  }
+
   private absorb() {
     const cells = this.store.cells.map((store) => this.adopt(store));
-    this.discardAllBut(cells);
+    this.latest = between(this.cells, cells);
     this.cells = cells;
     this.undoable = this.store.canUndo();
     this.redoable = this.store.canRedo();
+    if (!nothingIn(this.latest)) this.fire("cells changed", this.latest);
+    // After the news, since a cell that has gone is what the news is about.
+    this.discardAllBut(cells);
   }
 
   private adopt(store: CellStore) {
@@ -209,7 +267,10 @@ export class Notebook {
     }
   }
 
-  static memory(content: Partial<INotebookContent> = {}, options: Derived = {}) {
+  static memory(
+    content: Partial<INotebookContent> = {},
+    options: Derived = {},
+  ) {
     return new Notebook({ ...options, store: MemoryNotebook.from(content) });
   }
 

@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  import { whenReady as pythonReady } from "@codingame/monaco-vscode-python-default-extension";
+  import "@codingame/monaco-vscode-python-default-extension";
   import { MonacoEditorLanguageClientWrapper } from "monaco-editor-wrapper";
   import { configureDefaultWorkerFactory } from "monaco-editor-wrapper/workers/workerLoaders";
   import { getMonacoEnvironmentEnhanced } from "monaco-languageclient/vscode/services";
@@ -14,6 +14,7 @@
   ) => monaco.IDisposable;
 
   type Attachable = Pick<EditableFile, "path" | "source" | "sourceSync">;
+
 
   /**
    * The first attach brings the workspace's services up, and a second begun
@@ -37,15 +38,13 @@
 
   /**
    * The grammar that colours Python arrives with an extension the editor
-   * brings up, and a model created before it is registered stays plain until
-   * something makes the view redraw — which, left alone, is the first
-   * keystroke.
+   * itself brings up. A model created before it registers is never tokenized
+   * again on its own — left alone, the first keystroke in a cell is what
+   * colours that cell and no other.
+   *
+   * Setting a model's language resets its tokenization, and setting it to the
+   * language it already has does nothing at all, hence the round trip.
    */
-  const highlight = async (editor: monaco.editor.IStandaloneCodeEditor) => {
-    await pythonReady();
-    editor.render(true);
-  };
-
   const attachEditor = async (
     target: HTMLElement,
     file: Attachable,
@@ -84,8 +83,6 @@
 
     const model = editor.getModel();
     if (!model) throw new Error("Model not found");
-
-    void highlight(editor);
 
     file.source = model.getValue();
 

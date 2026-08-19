@@ -20,6 +20,8 @@
 </script>
 
 <script lang="ts">
+  import { tick } from "svelte";
+
   let { notebook, fontSize = 14 }: Props = $props();
 
   const chain = chainedCells(() => notebook.files);
@@ -29,9 +31,26 @@
 
   let root = $state<HTMLElement>();
 
-  /** Two notebooks on a page each answer for the keys pressed inside them. */
-  const pressedHere = ({ target }: KeyboardEvent) =>
+  /** Two notebooks on a page each answer for what happens inside them. */
+  const happenedHere = ({ target }: Event) =>
     target instanceof Node && root?.contains(target) === true;
+
+  /**
+   * A control that removes or disables itself takes the keyboard down with it,
+   * and the browser hands it back to the document — where the notebook's own
+   * shortcuts no longer reach. Deleting a cell and undoing it is one gesture,
+   * so the notebook keeps the keyboard rather than making the reader click to
+   * give it back.
+   */
+  const keepTheKeyboard = () => {
+    if (!root || root.contains(document.activeElement)) return;
+    root.focus();
+  };
+
+  /** Captured, so the target is read before what was clicked can be removed. */
+  const onclickcapture = (event: MouseEvent) => {
+    if (happenedHere(event)) void tick().then(keepTheKeyboard);
+  };
 
   const take = (event: KeyboardEvent, run: () => void) => {
     event.preventDefault();
@@ -40,13 +59,13 @@
 
   /** An editor with the keyboard undoes its own text; nothing here overrides it. */
   const onkeydown = (event: KeyboardEvent) => {
-    if (notebook.editing || !pressedHere(event)) return;
+    if (notebook.editing || !happenedHere(event)) return;
     if (undoes(event)) take(event, () => notebook.undo());
     else if (redoes(event)) take(event, () => notebook.redo());
   };
 </script>
 
-<svelte:window {onkeydown} />
+<svelte:window {onkeydown} {onclickcapture} />
 
 <div bind:this={root} class="notebook" data-testid="notebook" tabindex="-1">
   <div class="toolbar">

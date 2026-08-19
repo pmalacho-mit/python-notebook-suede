@@ -11,7 +11,7 @@
   /** One peer seeds the room; the rest take what the server already has. */
   const join = async (index: number) => {
     const shared = new YNotebook();
-    const { synced } = connect(shared, ROOM);
+    const { synced } = connect(shared, ROOM, { port: 8081 });
     await synced;
     if (index === 0 && shared.cells.length === 0)
       shared.fromJSON(await load("part1"));

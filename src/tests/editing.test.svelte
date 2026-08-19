@@ -1,6 +1,6 @@
 <script lang="ts" module>
   import { Sweater } from "../../sweater-vest-suede";
-  import { Notebook } from "../../release";
+  import { Notebook, type CellsChange } from "../../release";
   import {
     appendButton,
     coloursIn,
@@ -328,6 +328,72 @@
   }}
 >
   {#snippet vest(pocket: OneCell)}
+    <Notebook.Component notebook={pocket.notebook} />
+  {/snippet}
+</Sweater>
+
+<Sweater
+  name="deleting a cell and undoing it is one gesture, with no click in between"
+  body={async (harness) => {
+    const { container } = harness;
+    harness.set(new Pocket());
+
+    await rendered(container, 3);
+
+    // The button that removes the cell goes with it, and the keyboard would
+    // go to the document unless the notebook keeps hold of it.
+    await harness.withUserFocus(async (userEvent) => {
+      await userEvent.click(deleteButton(frames(container)[1]));
+      await rendered(container, 2);
+      await userEvent.keyboard("{Control>}z{/Control}");
+    });
+
+    await rendered(container, 3);
+  }}
+>
+  {#snippet vest(pocket: Pocket)}
+    <Notebook.Component notebook={pocket.notebook} />
+  {/snippet}
+</Sweater>
+
+<Sweater
+  name="an undo says which cell it brought back, and a change is reported however it came"
+  body={async (harness) => {
+    const { notebook } = harness.set(new Pocket());
+    const { container } = harness;
+    await rendered(container, 3);
+
+    const seen: string[] = [];
+    notebook.subscribe({
+      "cells changed": ({ added, removed, moved }) =>
+        seen.push(
+          `+${added.length} -${removed.length} ~${moved.map((m) => `${m.from}>${m.to}`).join("")}`,
+        ),
+    });
+
+    const doomed = notebook.cells[1];
+    notebook.remove(doomed);
+    harness.expect(seen).toEqual(["+0 -1 ~"]);
+
+    const taken = await new Promise<CellsChange>((resolve) => {
+      notebook.once({ "undo by user": (change) => resolve(change) });
+      notebook.undo();
+    });
+
+    // What comes back is the cell that went, carrying its text and outputs —
+    // the same store, behind a wrapper built for it again.
+    harness.expect(taken.added.map((cell) => cell.id)).toEqual([doomed.id]);
+    harness.expect(notebook.cells[1].store).toBe(doomed.store);
+    harness.expect(notebook.cells[1].source).toBe("total = 1 + 1");
+
+    // A reorder reports as a reorder, and nothing else does.
+    notebook.move(notebook.cells[2], 0);
+    harness.expect(seen.at(-1)).toBe("+0 -0 ~0>11>22>0");
+
+    harness.note(seen.join(" | "));
+  }}
+>
+  {#snippet vest(pocket: Pocket)}
     <Notebook.Component notebook={pocket.notebook} />
   {/snippet}
 </Sweater>

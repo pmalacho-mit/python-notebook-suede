@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  import { executable, type Cell } from "../model/cell.svelte";
+  import { executable, type Cell, type Status } from "../model/cell.svelte";
   import type { Notebook } from "../model/notebook.svelte";
   import Code from "./Code.svelte";
   import Markdown from "./Markdown.svelte";
@@ -25,6 +25,12 @@
 
   const toggleRun = () =>
     code?.busy ? code.interrupt() : code && notebook.run(code);
+
+  const stopping: Partial<Record<Status, string>> = {
+    queued: "Stop this cell before it starts",
+    running: "Stop this cell",
+    interrupting: "Stopping — Python stops at its next chance to",
+  };
 </script>
 
 <div
@@ -44,11 +50,11 @@
       <button
         class="run"
         class:busy={code.busy}
+        class:stopping={code.status === "interrupting"}
         data-testid="run-cell"
         aria-label={code.busy ? "interrupt this cell" : "run this cell"}
-        title={code.busy
-          ? "Stop this cell"
-          : "Run this cell (Ctrl+Enter, or Shift+Enter to go on)"}
+        title={stopping[code.status] ??
+          "Run this cell (Ctrl+Enter, or Shift+Enter to go on)"}
         onclick={toggleRun}
       ></button>
     {/if}
@@ -180,6 +186,10 @@
     border-top: 6px solid transparent;
     border-bottom: 6px solid transparent;
     border-left: 10px solid #374151;
+  }
+
+  .run.stopping {
+    opacity: 0.5;
   }
 
   .run.busy::after {

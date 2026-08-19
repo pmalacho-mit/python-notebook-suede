@@ -112,6 +112,13 @@ them.
 A traceback names the cell it came from (`Cell [3]`) rather than the file the
 cell was written to, which is an artefact of running it.
 
+`cell.interrupt()` asks Python to stop, and the interpreter looks between one
+bytecode and the next — so a loop stops in milliseconds and a cell blocked in
+`time.sleep` does not stop at all, because it is running no bytecode to be
+interrupted between. The cell reports `"interrupting"` until the run actually
+ends, rather than claiming to have stopped. Cells run one at a time, so
+anything queued behind such a cell waits for it.
+
 Cells run under their file name in the interpreter's own working directory,
 which is the root of the filesystem the kernel was given. So the editor
 resolving `import helpers` beside the notebook and Python resolving it at
@@ -126,6 +133,29 @@ go-to-definition on it lands in cell 1. `Notebook.Component` registers the
 chain and keeps it in step; there is nothing to wire up.
 
 Only code cells take part.
+
+## Watching what happens
+
+The notebook is an event emitter. Most of its events record **what the reader
+did** — `"cell added by user"`, `"code cell executed by user"` — and so are
+silent for a collaborator's edit or an undo, which nobody in this browser did.
+
+`"cells changed"` is the other question, and answers it from the reconciliation
+itself, so it fires however the change arrived — locally, from a collaborator,
+or from an undo:
+
+```ts
+notebook.subscribe({
+  "cells changed": ({ added, removed, moved }) => …,
+  "undo by user": (taken) => …, // the same shape, for what this undo took back
+});
+```
+
+A reorder reports as `moved` only when nothing came or went; after an insert or
+a delete every later index shifts, and none of that is a move. A cell that
+leaves and comes back reads as a removal and then an addition, because it is
+wrapped afresh — what it brings back with it is its store, and so its text and
+its outputs.
 
 ## The model
 

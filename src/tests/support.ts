@@ -57,8 +57,11 @@ export const outputText = (frame: HTMLElement) =>
  */
 export const coloursIn = (frame: HTMLElement) =>
   new Set(
-    [...frame.querySelectorAll<HTMLElement>('.view-lines [class^="mtk"]')].map(
-      (run) => run.className,
+    // Only the theme-colour class: bracket colourisation puts classes of its
+    // own on the same runs, and counting those makes an uncoloured cell look
+    // coloured.
+    [...frame.querySelectorAll<HTMLElement>('.view-lines [class^="mtk"]')].flatMap(
+      (run) => [...run.classList].filter((name) => /^mtk\d+$/.test(name)),
     ),
   );
 
